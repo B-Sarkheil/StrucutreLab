@@ -1,0 +1,43 @@
+[project]
+name = "structure-lab"
+version = "0.1.0"
+description = "Structure Lab: integrated engineering tools (first tool: Auto Design)"
+requires-python = ">=3.12"
+dependencies = [
+    "PySide6-Essentials",
+    "numpy",
+    "scipy",
+    "pandas",
+    "pydantic>=2",
+    "platformdirs",
+    "packaging",
+    "openpyxl",
+    "pywin32; sys_platform == 'win32'",
+    "comtypes; sys_platform == 'win32'",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-qt",
+    "ruff",
+    "mypy",
+    "scikit-learn",   # only for the ML lab phase of Auto Design
+]
+
+[tool.setuptools.packages.find]
+include = ["src*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

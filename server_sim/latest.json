@@ -1,0 +1,14 @@
+{
+  "channel": "stable",
+  "min_bootstrap_version": "1.0.0",
+  "app": {
+    "version": "0.1.0",
+    "file": "app-0.1.0.zip",
+    "sha256": "REPLACE_WITH_SHA256"
+  },
+  "runtime": {
+    "id": "REPLACE_WITH_HASH",
+    "file": "runtime-REPLACE_WITH_HASH.zip",
+    "sha256": "REPLACE_WITH_SHA256"
+  }
+}
