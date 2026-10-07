@@ -1,0 +1,14 @@
+{
+    "version": "1.0.0",
+    "configurations": [
+        {
+            "name": "Structure Lab",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "src",
+            "python": "${workspaceFolder}/runtime/python/python.exe",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        }
+    ]
+}

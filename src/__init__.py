@@ -1,1 +1,0 @@
-"""Structure Lab application package."""
