@@ -9,3 +9,4 @@ packaging
 openpyxl
 pywin32
 comtypes
+pythonnet>=3.0.3
