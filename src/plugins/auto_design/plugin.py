@@ -1,8 +1,8 @@
-"""Registers Auto Design in the UI. TODO: real page."""
+"""Registers Auto Design in the UI."""
 from __future__ import annotations
 
+from src.plugins.auto_design.ui.wizard import AutoDesignWizard
 from src.plugins.base import Plugin
-from src.plugins.placeholder import PlaceholderPage
 
 
 class AutoDesignPlugin(Plugin):
@@ -12,5 +12,4 @@ class AutoDesignPlugin(Plugin):
     description = "Automatic structural design using genetic algorithm."
 
     def create_widget(self):
-        # TODO: replace with the real page (auto_design/ui/page.py) once it exists.
-        return PlaceholderPage(self.title, self.description)
+        return AutoDesignWizard()
