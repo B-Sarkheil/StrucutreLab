@@ -1,24 +1,49 @@
-"""Entry point. The names main() and ping_app() are part of the frozen contract."""
-from __future__ import annotations
+"""Structure Lab application entry point."""
 
+import ctypes
 import sys
 
-from src.version import __version__
+from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import QApplication
 
+from .plugins.registry import register_builtin_plugins
+from .ui.main_window import MainWindow
+from .ui.theme import LOGO_ICO, apply_theme
+from .version import __version__
 
-def ping_app() -> bool:
-    """Self-check used by the launcher after each update. Always True."""
-    return True
+APP_USER_MODEL_ID = "StructureLab.App"
 
 
 def main() -> int:
-    # TODO: setup logging, create QApplication, load plugins, show main window
-    from src.core.logging_setup import setup_logging
-    from src.ui.main_window import run
+    """Start the Structure Lab application."""
 
-    setup_logging()
-    return run(version=__version__)
+    # Without this, Windows groups the app under python.exe and the
+    # taskbar shows the Python icon instead of ours.
+    if sys.platform == "win32":
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            APP_USER_MODEL_ID
+        )
+
+    app = QApplication.instance()
+
+    if app is None:
+        app = QApplication(sys.argv)
+
+    app.setWindowIcon(QIcon(str(LOGO_ICO)))
+
+    apply_theme(app)
+    register_builtin_plugins()
+
+    window = MainWindow(version=__version__)
+    window.show()
+
+    return app.exec()
+
+
+def ping_app() -> bool:
+    """Return True when the application can be imported successfully."""
+    return True
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

@@ -1,6 +1,6 @@
 [project]
 name = "structure-lab"
-version = "0.1.0"
+version = "1.0.0"
 description = "Structure Lab: integrated engineering tools (first tool: Auto Design)"
 requires-python = ">=3.12"
 dependencies = [
