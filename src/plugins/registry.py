@@ -47,7 +47,7 @@ def register_builtin_plugins() -> None:
         PlaceholderPlugin(
             name="auto_cps",
             title="Auto CPS",
-            icon="sld2sap.png",
+            icon="auto_cps.png",
             description="Automatic CPS modeling and design.",
         )
     )

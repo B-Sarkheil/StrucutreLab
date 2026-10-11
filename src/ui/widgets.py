@@ -12,6 +12,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import (
     QBrush,
     QColor,
+    QIcon,
     QPainter,
     QPainterPath,
     QPen,
@@ -26,7 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .theme import CYAN, HERO_BG, LOGO_PNG, RULE_HI
+from .theme import CYAN, HERO_BG, LOGO_PNG, RULE_HI, STEEL_DIM
 
 
 def mix(a: str | QColor, b: str | QColor, t: float) -> QColor:
@@ -80,6 +81,72 @@ def draw_corner_ticks(
         painter.drawLine(QPointF(x, y), QPointF(x + dx * length, y))
         painter.drawLine(QPointF(x, y), QPointF(x, y + dy * length))
 
+def arrow_icon(
+    direction: str = "right",
+    size: int = 24,
+    color: str = "#FFFFFF",
+    disabled_color: str = STEEL_DIM,
+    gap: int = 8,
+) -> QIcon:
+    """Round badge with a chevron ("right" or "left").
+
+    The pixmap is `size + gap` wide: `gap` is transparent space on the
+    side facing the button text, giving a comfortable text-icon distance.
+    Use an icon size of QSize(size + gap, size).
+    """
+
+    icon = QIcon()
+    scale = 2  # draw at 2x so it stays sharp on high-DPI screens
+
+    for mode, tone, badge_alpha in (
+        (QIcon.Mode.Normal, color, 50),
+        (QIcon.Mode.Disabled, disabled_color, 30),
+    ):
+        pixmap = QPixmap((size + gap) * scale, size * scale)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        pixmap.setDevicePixelRatio(scale)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        if direction == "left":
+            # badge on the left, gap on its right (between icon and text)
+            painter.translate(size, 0)
+            painter.scale(-1, 1)
+        else:
+            # gap on the left (between text and icon), badge on the right
+            painter.translate(gap, 0)
+
+        # Translucent round badge
+        badge = QColor(tone)
+        badge.setAlpha(badge_alpha)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(badge))
+        painter.drawEllipse(QRectF(1, 1, size - 2, size - 2))
+
+        # Chevron
+        cx = cy = size / 2
+        w = size * 0.11
+        h = size * 0.22
+
+        pen = QPen(QColor(tone), 2.2)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        painter.drawPolyline(
+            [
+                QPointF(cx - w, cy - h),
+                QPointF(cx + w, cy),
+                QPointF(cx - w, cy + h),
+            ]
+        )
+        painter.end()
+
+        icon.addPixmap(pixmap, mode)
+
+    return icon
 
 class ClickableFrame(QFrame):
     """Frame that emits `clicked` and animates a hover amount (0..1).

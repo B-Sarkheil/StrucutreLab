@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from src.plugins.auto_design.params import AutoDesignParams
 from src.ui.theme import DANGER, INK_RAISED, RULE
+from src.ui.widgets import arrow_icon
 
 PAGE_STYLE = f"""
     QFrame#formCard {{
@@ -48,7 +49,13 @@ PAGE_STYLE = f"""
 
 
 class Field(QWidget):
-    """Label + line edit + inline error message."""
+    """Label + line edit + inline error message.
+
+    The error label is always present with a fixed height, so showing or
+    clearing an error never moves the fields.
+    """
+
+    ERROR_HEIGHT = 18
 
     def __init__(
         self,
@@ -72,9 +79,10 @@ class Field(QWidget):
         self.edit.setProperty("invalid", False)
         self.edit.textChanged.connect(self.clear_error)
 
+        # Reserved space: the text is only emptied or filled.
         self.error = QLabel("")
         self.error.setObjectName("fieldError")
-        self.error.setVisible(False)
+        self.error.setFixedHeight(self.ERROR_HEIGHT)
 
         layout.addWidget(self.label)
 
@@ -98,11 +106,10 @@ class Field(QWidget):
 
     def set_error(self, message: str) -> None:
         self.error.setText(message)
-        self.error.setVisible(True)
         self._set_invalid(True)
 
     def clear_error(self) -> None:
-        self.error.setVisible(False)
+        self.error.setText("")
         self._set_invalid(False)
 
     def _set_invalid(self, invalid: bool) -> None:
@@ -177,6 +184,14 @@ class AutoDesignPage(QWidget):
             "Tolerance to Detect Member as Beam or Column (cm)", "Positive number"
         )
 
+        # Default values
+        self.popSize.edit.setText("100")
+        self.tournamentSize.edit.setText("4")
+        self.genSize.edit.setText("10")
+        self.mutationPercent.edit.setText("0")
+        self.penalizeLevel.edit.setText("1")
+        self.tolerance.edit.setText("1")
+
         grid.addWidget(self.popSize, 0, 0)
         grid.addWidget(self.tournamentSize, 0, 1)
         grid.addWidget(self.genSize, 1, 0)
@@ -200,7 +215,11 @@ class AutoDesignPage(QWidget):
         # Next
         # -------------------------------------------------------------
 
-        self.next_button = QPushButton("Next  →")
+        self.next_button = QPushButton("Next")
+        self.next_button.setIcon(arrow_icon("right"))
+        self.next_button.setIconSize(QSize(32, 24))
+        # Right-to-left layout puts the icon after the text.
+        self.next_button.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.next_button.setObjectName("primaryButton")
         self.next_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.next_button.setMinimumSize(150, 42)

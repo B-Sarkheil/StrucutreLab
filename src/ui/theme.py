@@ -41,8 +41,8 @@ FONT_TITLE = "Bahnschrift"
 FONT_BODY = "Segoe UI"
 
 ICONS_DIR = Path(__file__).parent / "assets" / "icons"
-LOGO_ICO = ICONS_DIR / "logo.ico"
-LOGO_PNG = ICONS_DIR / "logo.png"
+LOGO_ICO = ICONS_DIR / "logo4.ico"
+LOGO_PNG = ICONS_DIR / "logo4.png"
 
 
 STYLESHEET = Template("""
