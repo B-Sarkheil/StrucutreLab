@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import QSize, Qt, QThread, Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -40,6 +40,7 @@ from src.ui.theme import (
     STEEL,
     STEEL_DIM,
 )
+from src.ui.widgets import arrow_icon
 
 logger = logging.getLogger(__name__)
 
@@ -228,7 +229,9 @@ class SectionsPage(QWidget):
         layout.addSpacing(16)
 
         # Footer
-        self.back_button = QPushButton("←  Back")
+        self.back_button = QPushButton("Back")
+        self.back_button.setIcon(arrow_icon("left", color=PAPER))
+        self.back_button.setIconSize(QSize(32, 24))
         self.back_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.back_button.setMinimumSize(110, 42)
         self.back_button.clicked.connect(self.back_requested.emit)
@@ -239,7 +242,11 @@ class SectionsPage(QWidget):
         self.retry_button.clicked.connect(self.start_loading)
         self.retry_button.setVisible(False)
 
-        self.next_button = QPushButton("Next  →")
+        self.next_button = QPushButton("Next")
+        self.next_button.setIcon(arrow_icon("right"))
+        self.next_button.setIconSize(QSize(32, 24))
+        # Right-to-left layout puts the icon after the text.
+        self.next_button.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.next_button.setObjectName("primaryButton")
         self.next_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.next_button.setMinimumSize(150, 42)
