@@ -124,3 +124,4 @@ Known technical issues to fix next:
     - Auto Design step 2: allowed-sections table, SAP2000 loaded in a worker thread (`ui/sections_page.py`)
     - `AutoDesignWizard` container (`ui/wizard.py`); `plugin.py` now returns it instead of the placeholder page
     - `core/sap_client.py`: SAP2000 OAPI through pythonnet and a bundled v23 DLL, with a version check
+    - Auto Design UI enhancements.
