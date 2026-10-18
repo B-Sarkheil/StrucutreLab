@@ -237,7 +237,7 @@ class DropZone(ClickableFrame):
         self.browse_button.setMinimumSize(150, 38)
         self.browse_button.clicked.connect(self.clicked.emit)
 
-        self.chip = QLabel("SAP2000 v23  ·  .sdb")
+        self.chip = QLabel("SAP2000 v23  *.sdb")
         self.chip.setObjectName("dropChip")
 
         for widget in (self.badge, self.title, self.hint, self.detail):

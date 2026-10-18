@@ -2,22 +2,39 @@
 
 Connects to SAP2000, opens the reference file chosen in step 1, reads
 the frame sections defined in it and shows them in a table. Every cell
-of the three "Is Allowed for ..." columns is a Yes / No toggle
+of the four "Is Allowed for ..." columns is a Yes / No toggle
 (default No). Next emits the table as a list of `SectionPermission`.
+
+Editing helpers for long section lists:
+
+* name filter with wildcards (`IPE*`, `*300`, `?` for one character;
+  plain text matches anywhere in the name; `,` separates alternatives),
+* "apply to the shown sections": set one role to Yes / No for every row
+  that passes the filter,
+* Undo / Redo (every click, bulk action and import is one step),
+* live counters of allowed sections per role,
+* Excel import / export (`services/sections_excel.py`).
+
+Only rows hidden by the filter are skipped by the bulk action; Next,
+Export and the counters always use all rows.
 """
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, QThread, Signal
-from PySide6.QtGui import QBrush, QColor
+from PySide6.QtGui import QBrush, QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QProgressBar,
     QPushButton,
     QTableWidget,
@@ -28,6 +45,12 @@ from PySide6.QtWidgets import (
 
 from src.core.sap_client import SapClient
 from src.plugins.auto_design.params import SectionPermission
+from src.plugins.auto_design.services.sections_excel import (
+    HEADERS,
+    SectionsExcelError,
+    export_sections,
+    import_sections,
+)
 from src.ui.theme import (
     CYAN,
     DANGER,
@@ -44,11 +67,13 @@ from src.ui.widgets import arrow_icon
 
 logger = logging.getLogger(__name__)
 
-HEADERS = (
-    "Section",
-    "Is Allowed for Column",
-    "Is Allowed for Beam",
-    "Is Allowed for Brace",
+# (label, table column, SectionPermission field) of the four roles. The
+# table columns / Excel columns follow this order (see HEADERS).
+ROLES = (
+    ("Column", 1, "allowedForColumn"),
+    ("Beam", 2, "allowedForBeam"),
+    ("Horizontal Brace", 3, "allowedForHorizontalBrace"),
+    ("Vertical Brace", 4, "allowedForVerticalBrace"),
 )
 
 PAGE_STYLE = f"""
@@ -86,6 +111,15 @@ PAGE_STYLE = f"""
         background: transparent;
         color: {DANGER};
     }}
+    QLabel#toolLabel {{
+        background: transparent;
+        color: {STEEL};
+        font-weight: 600;
+    }}
+    QLabel#summaryText {{
+        background: transparent;
+        color: {STEEL};
+    }}
     QProgressBar#loadingBar {{
         background: {INK_HI};
         border: none;
@@ -97,6 +131,45 @@ PAGE_STYLE = f"""
         border-radius: 2px;
     }}
 """
+
+
+# ---------------------------------------------------------------------
+# Name filter
+# ---------------------------------------------------------------------
+
+
+def compile_name_filter(text: str) -> list[re.Pattern]:
+    """Patterns for the filter box (empty list = show everything).
+
+    Text with `*` or `?` must match the whole name (`IPE*` = starts with
+    IPE); text without them matches anywhere in the name. Alternatives
+    are separated by `,` or `;`. Case is ignored.
+    """
+
+    patterns = []
+
+    for part in re.split(r"[,;]", text):
+        part = part.strip()
+
+        if not part:
+            continue
+
+        if "*" in part or "?" in part:
+            regex = "".join(
+                ".*" if ch == "*" else "." if ch == "?" else re.escape(ch)
+                for ch in part
+            )
+        else:
+            regex = ".*" + re.escape(part) + ".*"
+
+        patterns.append(re.compile(regex, re.IGNORECASE | re.DOTALL))
+
+    return patterns
+
+
+# ---------------------------------------------------------------------
+# Worker and table
+# ---------------------------------------------------------------------
 
 
 class _SectionsLoader(QThread):
@@ -139,6 +212,10 @@ class _ToggleTable(QTableWidget):
         super().keyPressEvent(event)
 
 
+# One undoable step: [(row, column, old value, new value), ...]
+_Step = list[tuple[int, int, bool, bool]]
+
+
 class SectionsPage(QWidget):
     """Table of SAP2000 sections with Yes / No permissions."""
 
@@ -152,6 +229,9 @@ class SectionsPage(QWidget):
         self.client: SapClient | None = None
         self.section_names: list[str] = []
         self._loader: _SectionsLoader | None = None
+        self._loading = False
+        self._undo: list[_Step] = []
+        self._redo: list[_Step] = []
 
         self.setObjectName("page")
         self.setStyleSheet(PAGE_STYLE)
@@ -163,7 +243,8 @@ class SectionsPage(QWidget):
         title = QLabel("Auto Design")
         title.setObjectName("pageTitle")
         subtitle = QLabel(
-            "Choose which sections are allowed to be used as column, beam or brace."
+            "Choose which sections are allowed to be used as column, beam, "
+            "horizontal brace or vertical brace."
         )
         subtitle.setObjectName("pageSubtitle")
         subtitle.setWordWrap(True)
@@ -194,6 +275,57 @@ class SectionsPage(QWidget):
         layout.addWidget(self.message)
         layout.addSpacing(10)
 
+        # Row 1: name filter, undo, redo
+        self.filter_edit = QLineEdit()
+        self.filter_edit.setPlaceholderText("Filter by name:   IPE*    *300    HEA*, IPE*")
+        self.filter_edit.setToolTip(
+            "Plain text matches anywhere in the name.\n"
+            "* = any characters, ? = one character (IPE* starts with IPE, *300 ends with 300).\n"
+            "Use a comma to list several patterns."
+        )
+        self.filter_edit.setClearButtonEnabled(True)
+        self.filter_edit.setMinimumHeight(34)
+        self.filter_edit.textChanged.connect(self._apply_filter)
+
+        self.undo_button = self._tool_button("Undo", self.undo, "Undo (Ctrl+Z)")
+        self.redo_button = self._tool_button("Redo", self.redo, "Redo (Ctrl+Y)")
+
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(8)
+        filter_row.addWidget(self.filter_edit, 1)
+        filter_row.addWidget(self.undo_button)
+        filter_row.addWidget(self.redo_button)
+        layout.addLayout(filter_row)
+        layout.addSpacing(8)
+
+        # Row 2: apply one role to every shown row
+        apply_label = QLabel("Apply to the shown sections:")
+        apply_label.setObjectName("toolLabel")
+
+        self.role_combo = QComboBox()
+        self.role_combo.setMinimumHeight(34)
+        self.role_combo.setMinimumWidth(170)
+
+        for label, column, _field in ROLES:
+            self.role_combo.addItem(label, column)
+
+        self.yes_button = self._tool_button(
+            "Set Yes", lambda: self._bulk_set(True), "Set the chosen role to Yes"
+        )
+        self.no_button = self._tool_button(
+            "Set No", lambda: self._bulk_set(False), "Set the chosen role to No"
+        )
+
+        bulk_row = QHBoxLayout()
+        bulk_row.setSpacing(8)
+        bulk_row.addWidget(apply_label)
+        bulk_row.addWidget(self.role_combo)
+        bulk_row.addWidget(self.yes_button)
+        bulk_row.addWidget(self.no_button)
+        bulk_row.addStretch()
+        layout.addLayout(bulk_row)
+        layout.addSpacing(10)
+
         # Table
         card = QFrame()
         card.setObjectName("tableCard")
@@ -215,9 +347,11 @@ class SectionsPage(QWidget):
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
 
+        # Role columns are as wide as their (long) titles; the name takes the rest.
         for column in range(1, len(HEADERS)):
-            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
-            self.table.setColumnWidth(column, 175)
+            header.setSectionResizeMode(
+                column, QHeaderView.ResizeMode.ResizeToContents
+            )
 
         header.setHighlightSections(False)
 
@@ -226,7 +360,23 @@ class SectionsPage(QWidget):
 
         card_layout.addWidget(self.table)
         layout.addWidget(card, 1)
-        layout.addSpacing(16)
+        layout.addSpacing(8)
+
+        # Live counters
+        self.summary = QLabel("")
+        self.summary.setObjectName("summaryText")
+        self.summary.setTextFormat(Qt.TextFormat.RichText)
+
+        self.shown_label = QLabel("")
+        self.shown_label.setObjectName("summaryText")
+        self.shown_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+
+        summary_row = QHBoxLayout()
+        summary_row.addWidget(self.summary)
+        summary_row.addStretch()
+        summary_row.addWidget(self.shown_label)
+        layout.addLayout(summary_row)
+        layout.addSpacing(12)
 
         # Footer
         self.back_button = QPushButton("Back")
@@ -235,6 +385,20 @@ class SectionsPage(QWidget):
         self.back_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.back_button.setMinimumSize(110, 42)
         self.back_button.clicked.connect(self.back_requested.emit)
+
+        self.import_button = QPushButton("Import…")
+        self.import_button.setToolTip(
+            "Read Yes / No values from an Excel file (matched by section name)"
+        )
+        self.import_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.import_button.setMinimumSize(110, 42)
+        self.import_button.clicked.connect(self._import_excel)
+
+        self.export_button = QPushButton("Export…")
+        self.export_button.setToolTip("Save all sections and their Yes / No to Excel")
+        self.export_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.export_button.setMinimumSize(110, 42)
+        self.export_button.clicked.connect(self._export_excel)
 
         self.retry_button = QPushButton("Retry")
         self.retry_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -255,12 +419,35 @@ class SectionsPage(QWidget):
         footer = QHBoxLayout()
         footer.setSpacing(10)
         footer.addWidget(self.back_button)
+        footer.addWidget(self.import_button)
+        footer.addWidget(self.export_button)
         footer.addWidget(self.retry_button)
         footer.addStretch()
         footer.addWidget(self.next_button)
         layout.addLayout(footer)
 
+        # Ctrl+Z / Ctrl+Y. When the filter box has focus it keeps its own
+        # text undo (Qt gives the focused editor the key first).
+        for keys, slot in (
+            ("Ctrl+Z", self.undo),
+            ("Ctrl+Y", self.redo),
+            ("Ctrl+Shift+Z", self.redo),
+        ):
+            shortcut = QShortcut(QKeySequence(keys), self)
+            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(slot)
+
         self._set_loading(False)
+
+    @staticmethod
+    def _tool_button(text: str, slot, tooltip: str = "") -> QPushButton:
+        button = QPushButton(text)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setMinimumHeight(34)
+        button.setToolTip(tooltip)
+        button.clicked.connect(slot)
+
+        return button
 
     # -----------------------------------------------------------------
     # Loading
@@ -281,10 +468,10 @@ class SectionsPage(QWidget):
         self._loader.start()
 
     def _set_loading(self, loading: bool) -> None:
+        self._loading = loading
         self.progress.setVisible(loading)
         self.table.setEnabled(not loading)
         self.back_button.setEnabled(not loading)
-        self.next_button.setEnabled(not loading and self.table.rowCount() > 0)
         self.retry_button.setVisible(False)
         self.message.setVisible(False)
 
@@ -292,6 +479,8 @@ class SectionsPage(QWidget):
             self.status.setText(
                 "Connecting to SAP2000 and opening the reference file…"
             )
+
+        self._sync_controls()
 
     def _on_loaded(self, client: SapClient, names: list[str]) -> None:
         self.client = client
@@ -303,21 +492,27 @@ class SectionsPage(QWidget):
         self.status.setText(f"{len(names)} sections found in {file_name}.")
 
     def _on_failed(self, error: str) -> None:
+        self._fill_table([])
         self._set_loading(False)
         self.status.setText("")
         self.message.setText(f"Could not read the sections from SAP2000: {error}")
         self.message.setVisible(True)
         self.retry_button.setVisible(True)
-        self.next_button.setEnabled(False)
 
     # -----------------------------------------------------------------
     # Table
     # -----------------------------------------------------------------
 
     def _fill_table(self, names: list[str]) -> None:
+        self._undo.clear()
+        self._redo.clear()
+        self.filter_edit.clear()
+
         self.table.setRowCount(len(names))
 
         for row, name in enumerate(names):
+            self.table.setRowHidden(row, False)
+
             name_item = QTableWidgetItem(name)
             name_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
             self.table.setItem(row, 0, name_item)
@@ -329,6 +524,9 @@ class SectionsPage(QWidget):
                 self._set_allowed(item, False)
                 self.table.setItem(row, column, item)
 
+        self._update_summary()
+        self._sync_controls()
+
     @staticmethod
     def _set_allowed(item: QTableWidgetItem, allowed: bool) -> None:
         item.setData(Qt.ItemDataRole.UserRole, allowed)
@@ -339,32 +537,247 @@ class SectionsPage(QWidget):
         font.setBold(allowed)
         item.setFont(font)
 
-    def _toggle(self, row: int, column: int) -> None:
-        if column < 1:
-            return
-
-        item = self.table.item(row, column)
-
-        if item is not None:
-            self._set_allowed(item, not bool(item.data(Qt.ItemDataRole.UserRole)))
-            self.message.setVisible(False)
-
     def _allowed(self, row: int, column: int) -> bool:
         return bool(self.table.item(row, column).data(Qt.ItemDataRole.UserRole))
 
+    def _visible_rows(self) -> list[int]:
+        return [
+            row
+            for row in range(self.table.rowCount())
+            if not self.table.isRowHidden(row)
+        ]
+
     @property
     def sections(self) -> list[SectionPermission]:
-        """Current content of the table."""
+        """Current content of the table (all rows, shown or hidden)."""
 
         return [
             SectionPermission(
                 name=self.table.item(row, 0).text(),
-                allowedForColumn=self._allowed(row, 1),
-                allowedForBeam=self._allowed(row, 2),
-                allowedForBrace=self._allowed(row, 3),
+                **{field: self._allowed(row, column) for _l, column, field in ROLES},
             )
             for row in range(self.table.rowCount())
         ]
+
+    # -----------------------------------------------------------------
+    # Editing (every edit goes through _apply_changes, so it is undoable)
+    # -----------------------------------------------------------------
+
+    def _apply_changes(self, changes: list[tuple[int, int, bool]]) -> int:
+        """Set cells as ONE undoable step; returns how many really changed."""
+
+        step: _Step = []
+
+        for row, column, value in changes:
+            item = self.table.item(row, column)
+            old = bool(item.data(Qt.ItemDataRole.UserRole))
+
+            if old != value:
+                self._set_allowed(item, value)
+                step.append((row, column, old, value))
+
+        if step:
+            self._undo.append(step)
+            self._redo.clear()
+            self._after_edit()
+
+        return len(step)
+
+    def _toggle(self, row: int, column: int) -> None:
+        if column < 1 or self._loading:
+            return
+
+        self._apply_changes([(row, column, not self._allowed(row, column))])
+        self.message.setVisible(False)
+
+    def _bulk_set(self, allowed: bool) -> None:
+        if self._loading:
+            return
+
+        column = int(self.role_combo.currentData())
+        role = self.role_combo.currentText()
+        rows = self._visible_rows()
+
+        changed = self._apply_changes([(row, column, allowed) for row in rows])
+
+        self._notice(
+            f"{role} set to {'Yes' if allowed else 'No'} for {len(rows)} shown "
+            f"sections ({changed} changed)."
+        )
+
+    def undo(self) -> None:
+        if self._loading or not self._undo:
+            return
+
+        step = self._undo.pop()
+
+        for row, column, old, _new in step:
+            self._set_allowed(self.table.item(row, column), old)
+
+        self._redo.append(step)
+        self._after_edit()
+        self._notice(f"Undone ({len(step)} cells).")
+
+    def redo(self) -> None:
+        if self._loading or not self._redo:
+            return
+
+        step = self._redo.pop()
+
+        for row, column, _old, new in step:
+            self._set_allowed(self.table.item(row, column), new)
+
+        self._undo.append(step)
+        self._after_edit()
+        self._notice(f"Redone ({len(step)} cells).")
+
+    def _after_edit(self) -> None:
+        self._update_summary()
+        self._sync_controls()
+
+    # -----------------------------------------------------------------
+    # Filter, counters, enabled state
+    # -----------------------------------------------------------------
+
+    def _apply_filter(self, text: str) -> None:
+        patterns = compile_name_filter(text)
+
+        for row in range(self.table.rowCount()):
+            name = self.table.item(row, 0).text()
+            hidden = bool(patterns) and not any(p.fullmatch(name) for p in patterns)
+            self.table.setRowHidden(row, hidden)
+
+        self._update_summary()
+        self._sync_controls()
+
+    @staticmethod
+    def _number(value: int) -> str:
+        return f"<span style='color:{CYAN}; font-weight:600'>{value}</span>"
+
+    def _update_summary(self) -> None:
+        total = self.table.rowCount()
+        counts = [
+            sum(self._allowed(row, column) for row in range(total))
+            for _label, column, _field in ROLES
+        ]
+
+        parts = [
+            f"{label} {self._number(count)}"
+            for (label, _column, _field), count in zip(ROLES, counts)
+        ]
+        self.summary.setText("Allowed:&nbsp;&nbsp; " + "&nbsp;&nbsp;|&nbsp;&nbsp;".join(parts))
+        self.shown_label.setText(f"Showing {len(self._visible_rows())} of {total}")
+
+    def _sync_controls(self) -> None:
+        ready = not self._loading and self.table.rowCount() > 0
+        shown = len(self._visible_rows()) if ready else 0
+
+        for widget in (
+            self.filter_edit,
+            self.role_combo,
+            self.import_button,
+            self.export_button,
+        ):
+            widget.setEnabled(ready)
+
+        self.yes_button.setText(f"Set Yes ({shown})")
+        self.no_button.setText(f"Set No ({shown})")
+        self.yes_button.setEnabled(shown > 0)
+        self.no_button.setEnabled(shown > 0)
+
+        self.undo_button.setEnabled(ready and bool(self._undo))
+        self.redo_button.setEnabled(ready and bool(self._redo))
+        self.next_button.setEnabled(ready)
+
+    def _notice(self, text: str) -> None:
+        self.message.setVisible(False)
+        self.status.setText(text)
+
+    def _show_error(self, text: str) -> None:
+        self.message.setText(text)
+        self.message.setVisible(True)
+
+    # -----------------------------------------------------------------
+    # Excel
+    # -----------------------------------------------------------------
+
+    def _export_excel(self) -> None:
+        sdb = Path(self.sap_path)
+        default = sdb.with_name(f"{sdb.stem}_sections.xlsx")
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export sections to Excel", str(default), "Excel files (*.xlsx)"
+        )
+
+        if not path:
+            return
+
+        if not path.lower().endswith(".xlsx"):
+            path += ".xlsx"
+
+        sections = self.sections
+
+        try:
+            export_sections(path, sections)
+        except SectionsExcelError as exc:
+            self._show_error(str(exc))
+            return
+
+        self._notice(f"Exported {len(sections)} sections to {Path(path).name}.")
+
+    def _import_excel(self) -> None:
+        start = str(Path(self.sap_path).parent)
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import sections from Excel", start, "Excel files (*.xlsx)"
+        )
+
+        if not path:
+            return
+
+        try:
+            data = import_sections(path)
+        except SectionsExcelError as exc:
+            self._show_error(str(exc))
+            return
+
+        changes: list[tuple[int, int, bool]] = []
+        matched = 0
+
+        for row in range(self.table.rowCount()):
+            flags = data.get(self.table.item(row, 0).text())
+
+            if flags is None:
+                continue
+
+            matched += 1
+            changes.extend(
+                (row, column, flag)
+                for (_label, column, _field), flag in zip(ROLES, flags)
+            )
+
+        if matched == 0:
+            self._show_error(
+                "None of the section names in the file exist in this model."
+            )
+            return
+
+        changed = self._apply_changes(changes)
+
+        text = (
+            f"Imported {Path(path).name}: {matched} sections matched, "
+            f"{changed} cells changed."
+        )
+        not_in_model = len(data) - matched
+        not_in_file = self.table.rowCount() - matched
+
+        if not_in_model:
+            text += f" {not_in_model} in the file are not in the model."
+
+        if not_in_file:
+            text += f" {not_in_file} in the model are not in the file (unchanged)."
+
+        self._notice(text)
 
     # -----------------------------------------------------------------
     # Next
@@ -374,11 +787,9 @@ class SectionsPage(QWidget):
         sections = self.sections
 
         if not any(
-            s.allowedForColumn or s.allowedForBeam or s.allowedForBrace
-            for s in sections
+            getattr(s, field) for s in sections for _l, _c, field in ROLES
         ):
-            self.message.setText("Allow at least one section before continuing.")
-            self.message.setVisible(True)
+            self._show_error("Allow at least one section before continuing.")
             return
 
         self.next_requested.emit(sections)

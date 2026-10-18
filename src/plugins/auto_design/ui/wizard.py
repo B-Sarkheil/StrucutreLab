@@ -74,11 +74,13 @@ class AutoDesignWizard(QStackedWidget):
         self.sap = self._sections_page.client if self._sections_page else None
 
         logger.info(
-            "Sections accepted: %d total, %d column, %d beam, %d brace",
+            "Sections accepted: %d total, %d column, %d beam, "
+            "%d horizontal brace, %d vertical brace",
             len(sections),
             sum(s.allowedForColumn for s in sections),
             sum(s.allowedForBeam for s in sections),
-            sum(s.allowedForBrace for s in sections),
+            sum(s.allowedForHorizontalBrace for s in sections),
+            sum(s.allowedForVerticalBrace for s in sections),
         )
 
         self._show_ga_settings()

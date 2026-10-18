@@ -30,4 +30,5 @@ class SectionPermission:
     name: str  # section name in the SAP2000 model
     allowedForColumn: bool = False
     allowedForBeam: bool = False
-    allowedForBrace: bool = False
+    allowedForHorizontalBrace: bool = False
+    allowedForVerticalBrace: bool = False
