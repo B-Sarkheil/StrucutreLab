@@ -1,0 +1,11 @@
+# Runtime libraries (generate with: uv export --no-dev --no-hashes > runtime/requirements.txt)
+PySide6-Essentials
+numpy
+scipy
+pandas
+pydantic>=2
+platformdirs
+packaging
+openpyxl
+pywin32
+comtypes
