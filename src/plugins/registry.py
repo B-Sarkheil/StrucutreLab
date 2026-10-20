@@ -4,6 +4,7 @@ from __future__ import annotations
 from src.plugins.auto_design.plugin import AutoDesignPlugin
 from src.plugins.base import Plugin
 from src.plugins.placeholder import PlaceholderPlugin
+from src.plugins.sld_to_sap.plugin import SldToSapPlugin
 
 
 _plugins: list[Plugin] = []
@@ -25,15 +26,8 @@ def register_builtin_plugins() -> None:
     """Register every plugin shipped with Structure Lab in navigation order."""
     register_plugin(AutoDesignPlugin())
 
-    register_plugin(
-        PlaceholderPlugin(
-            name="sld_to_sap",
-            title="SLD to SAP",
-            icon="sld2sap.png",
-            description="Automatic loading of the structure using piping SLD.",
-        )
-    )
-
+    register_plugin(SldToSapPlugin())
+    
     register_plugin(
         PlaceholderPlugin(
             name="pdms_to_sap",
