@@ -11,6 +11,8 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QGridLayout,
+    QGroupBox,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -51,14 +53,34 @@ class SldToSapPage(QWidget):
         self._timer.setInterval(350)
         self._timer.timeout.connect(self._validate)
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(34, 24, 34, 24)
+        # Keep the complete page inside a scroll area so controls remain
+        # reachable when the main window is not maximized or has limited height.
+        from PySide6.QtWidgets import QScrollArea
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        scroll_area = QScrollArea(self)
+        scroll_area.setObjectName("sldPageScrollArea")
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        outer_layout.addWidget(scroll_area)
+
+        content = QWidget()
+        content.setObjectName("sldPageContent")
+        scroll_area.setWidget(content)
+
+        root = QVBoxLayout(content)
+        root.setContentsMargins(22, 18, 22, 18)
         root.setSpacing(10)
 
         title = QLabel("SLD to SAP")
         title.setObjectName("pageTitle")
         subtitle = QLabel(
-            "Convert the CSV files of the piping SLD into SAP2000 joint and distributed loads"
+            "Convert the CSV files of the piping SLD into SAP2000 joint and distributed load tables."
         )
         subtitle.setObjectName("pageSubtitle")
         subtitle.setWordWrap(True)
@@ -66,49 +88,73 @@ class SldToSapPage(QWidget):
         root.addWidget(subtitle)
 
         # --- parameters -------------------------------------------------
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(14)
+        # Visible field hints replace tooltip-only explanations and wrap on narrow windows.
+        params_box = QGroupBox("Conversion parameters")
+        params_grid = QGridLayout(params_box)
+        params_grid.setHorizontalSpacing(16)
+        params_grid.setVerticalSpacing(8)
         self.z0 = _spin(0.0, -1e6, 1e6)
         self.tolerance = _spin(10.0, 0.0, 1e4, 1)
         self.end_tolerance = _spin(5.0, 0.0, 1e4, 1)
         self.eqz = _spin(0.2, 0.0, 10.0)
         self.friction = _spin(0.15, 0.0, 10.0)
+        # Compact inputs; match the Conversion parameters region background.
+        for field in (self.z0, self.tolerance, self.end_tolerance, self.eqz, self.friction):
+            field.setFixedWidth(125)
+            field.setStyleSheet("QDoubleSpinBox { background-color: #060D19; }")
         fields = [
-            ("Z value of the origin of the coordinates in framing elevations (m)", self.z0, "Real level of the origin point in X / Y elevation files."),
+            ("Z value of the origin of the coordinates in framing elevations (m)", self.z0, "Level of the origin point in XZ or YZ views in SAP2000."),
             ("Tolerance to find beams for distributed loads (mm)", self.tolerance, "A beam within this distance of the load line counts as on it."),
-            ("Tolerance to accept an out of the beam distributed load (mm)", self.end_tolerance, "How far a load may stick out of the beam ends and still belong to that beam."),
-            ("The vertical seismic coefficient (0.2*Sds in ASCE7-10)", self.eqz, "Vertical earthquake coefficient, 0.2 x Sds (ASCE 7-10)."),
-            ("Pipe on beam Friction coefficient", self.friction, "Steel to steel friction."),
+            ("Tolerance to accept out of beam distributed load (mm)", self.end_tolerance, "How far a load may stick out of the beam ends and still belong to that beam."),
+            ("The vertical seismic coefficient", self.eqz, "EQ.Z coefficient, 0.2 x Sds (ASCE7-10)."),
+            ("Friction coefficient", self.friction, "Pipe on beam friction"),
         ]
-        for row, (text, widget, tip) in enumerate(fields):
-            label = QLabel(text)
-            label.setToolTip(tip)
-            widget.setToolTip(tip)
-            grid.addWidget(label, row, 0)
-            grid.addWidget(widget, row, 1)
-        grid.setColumnStretch(2, 1)
-        root.addLayout(grid)
+        for index, (caption, widget, help_text) in enumerate(fields):
+            cell = QWidget()
+            # Match the Conversion parameters panel surface; global QWidget QSS
+            # otherwise paints these field containers with the page background.
+            cell.setStyleSheet("background-color: #060D19;")
+            cell_layout = QVBoxLayout(cell)
+            cell_layout.setContentsMargins(0, 0, 0, 0)
+            cell_layout.setSpacing(4)
+            label = QLabel(caption)
+            label.setWordWrap(True)
+            hint = QLabel(help_text)
+            hint.setObjectName("fieldHint")
+            hint.setWordWrap(True)
+            widget.setToolTip(help_text)
+            cell_layout.addWidget(label)
+            cell_layout.addWidget(widget)
+            cell_layout.addWidget(hint)
+            params_grid.addWidget(cell, index // 2, index % 2)
+        params_grid.setColumnStretch(0, 1)
+        params_grid.setColumnStretch(1, 1)
+        root.addWidget(params_box)
 
         # --- files ------------------------------------------------------
+        files_box = QGroupBox("SLD CSV Files")
+        files_layout = QVBoxLayout(files_box)
+        files_layout.setContentsMargins(12, 16, 12, 12)
+        files_layout.setSpacing(8)
         self.files = QListWidget()
         self.files.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.files.setMinimumHeight(64)
         self.files.setMaximumHeight(110)
         buttons = QHBoxLayout()
         for text, slot in (
-            ("Add CSV files…", self._add_files),
-            ("Add folder…", self._add_folder),
-            ("Remove", self._remove_files),
+            ("+ Add CSV", self._add_files),
+            ("+ Add folder", self._add_folder),
+            ("− Remove selected", self._remove_files),
         ):
             b = QPushButton(text)
             b.clicked.connect(slot)
             buttons.addWidget(b)
         buttons.addStretch()
-        root.addWidget(QLabel("SLD CSV files"))
-        root.addWidget(self.files)
-        root.addLayout(buttons)
+        files_layout.addWidget(self.files)
+        files_layout.addLayout(buttons)
+        root.addWidget(files_box)
 
-        self.connectivity = self._path_row(root, "SAP2000 Excel file (Connectivity)", self._browse_model)
-        self.out_dir = self._path_row(root, "Output folder (default: next to the Excel file)", self._browse_out)
+        self.connectivity = self._path_row(root, "SAP2000 Connectivity File", self._browse_model)
 
         # --- run --------------------------------------------------------
         run_row = QHBoxLayout()
@@ -127,12 +173,20 @@ class SldToSapPage(QWidget):
 
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["Type", "Code", "File", "Index", "Message"])
-        self.table.horizontalHeader().setStretchLastSection(True)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setStretchLastSection(False)
+        self.table.setColumnWidth(0, 85)   # Type
+        self.table.setColumnWidth(1, 90)   # Code
+        self.table.setColumnWidth(2, 150)  # File
+        self.table.setColumnWidth(3, 65)   # Index
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)  # Message
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.verticalHeader().setVisible(False)
         self.table.cellDoubleClicked.connect(self._copy_cad)
         self.table.setToolTip("Double-click a row to copy its CAD coordinates.")
+        self.table.setMinimumHeight(180)
         root.addWidget(self.table, 1)
 
         for box in (self.z0, self.tolerance, self.end_tolerance, self.eqz, self.friction):
@@ -177,11 +231,6 @@ class SldToSapPage(QWidget):
         name, _ = QFileDialog.getOpenFileName(self, "SAP2000 Excel file", "", "Excel (*.xlsx)")
         if name:
             self.connectivity.setText(name)
-
-    def _browse_out(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Output folder")
-        if folder:
-            self.out_dir.setText(folder)
 
     def _open_out(self) -> None:
         if self._out_files:
@@ -250,7 +299,17 @@ class SldToSapPage(QWidget):
                 self.status.setText(f"{len(result.errors)} error(s). No output was written.")
                 self.run_button.setEnabled(False)
                 return
-            out = self.out_dir.text().strip() or str(Path(model).parent)
+            # Ask for the destination only after conversion and validation succeed.
+            # Start in the Connectivity File's directory as the sensible default.
+            out = QFileDialog.getExistingDirectory(
+                self,
+                "Select folder for Excel output files",
+                str(Path(model).parent),
+                QFileDialog.Option.ShowDirsOnly,
+            )
+            if not out:
+                self.status.setText("Export cancelled; no output files were written.")
+                return
             self._out_files = write_outputs(result, out)
         except Exception as exc:
             logger.exception("SLD to SAP failed")
@@ -277,8 +336,14 @@ class SldToSapPage(QWidget):
                 if i.cad:
                     item.setData(Qt.ItemDataRole.UserRole, f"{i.cad[0]:.3f}, {i.cad[1]:.3f}")
                 self.table.setItem(r, c, item)
-        self.table.resizeColumnsToContents()
-        self.table.horizontalHeader().setStretchLastSection(True)
+        # Resize to content only when rows exist; an empty table otherwise
+        # reports zero-width contents and can collapse all column widths.
+        if issues:
+            self.table.resizeColumnsToContents()
+            widths = (85, 90, 150, 65)
+            for column, minimum in enumerate(widths):
+                self.table.setColumnWidth(column, max(self.table.columnWidth(column), minimum))
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
 
     def _copy_cad(self, row: int, _col: int) -> None:
         item = self.table.item(row, 0)
