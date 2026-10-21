@@ -400,6 +400,41 @@ STYLESHEET = Template("""
     }
 
 
+    QGroupBox {
+        background: $ink_deep;
+        color: $paper;
+        border: 1px solid $rule_hi;
+        border-radius: 10px;
+        margin-top: 10px;
+        padding-top: 8px;
+        font-weight: 600;
+    }
+
+    QGroupBox::title {
+        subcontrol-origin: margin;
+        left: 12px;
+        padding: 0 6px;
+        color: $cyan;
+    }
+
+    QLabel#fieldHint {
+        color: $steel_dim;
+        font-size: 8.5pt;
+        font-weight: 400;
+    }
+
+    QPushButton#primaryButton:disabled {
+        background: #252F3A;
+        color: #8794A2;
+        border: 1px solid #3A4653;
+    }
+
+    QPushButton#primaryButton:disabled:hover {
+        background: #252F3A;
+        color: #8794A2;
+        border: 1px solid #3A4653;
+    }
+
     /* =====================================================
        Inputs
        ===================================================== */
