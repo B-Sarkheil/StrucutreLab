@@ -159,8 +159,13 @@ Known technical issues to fix next:
 6. Ideas the user declined for Auto Design step 2, do not build unless asked again: smart grouping by section family or dimensions, remembering the last choice per section name, saved templates, a warning when a role has no section.
 
 ## Change log
+* [1.1.5] - (2026-10-21):
+    - version no. is mentioning to SLD2SAP.m last ver. as v1.4
+    - SLD to SAP plugin: `SldToSapPlugin` replaces the placeholder in `plugins/registry.py`; services `issues.py`, `geometry.py`, `sld_reader.py`, `connectivity.py`, `matcher.py`, `load_rules.py`, `pipeline.py`, `exporter.py` and `params.py` written from `docs/sld_to_sap_algorithm.md`
+    - SLD to SAP page (`ui/page.py`): parameters, CSV list, Excel model, output folder; stage 1 (CSV only) and stage 2 (with the Excel model) checks re-run automatically and list all errors together, sorted by file; `Convert` enabled only without errors; double-click on an issue copies its CAD coordinates
+    - SLD to SAP tests in `tests/sld_to_sap/test_sld_to_sap.py`
 
-* [1.0.0] - (2026-10-??): 
+* [1.0.0] - (2026-10-20): 
     - initial shell (PySide6, embedded Python 3.12.10, dark theme, title bar, sidebar)
     - initial plugin architecture
     - plugin registry wired to navigation and Home
@@ -179,6 +184,3 @@ Known technical issues to fix next:
     - Auto Design editing tools (`ui/sections_page.py`): name filter with `*` / `?`, `Set Yes / Set No` for the shown rows per role, Undo / Redo, live counters
     - Auto Design excel import/export of the sections table (new `services/sections_excel.py`, `services/__init__.py`); `openpyxl` added to `pyproject.toml`
     - brace split in two: `SectionPermission.allowedForBrace` replaced by `allowedForHorizontalBrace` and `allowedForVerticalBrace` (`params.py`); step 2 table, bulk apply, counters (`ui/sections_page.py`), Excel (`services/sections_excel.py`) and the log line in `ui/wizard.py` updated; role columns now size to their titles
-    - SLD to SAP plugin: `SldToSapPlugin` replaces the placeholder in `plugins/registry.py`; services `issues.py`, `geometry.py`, `sld_reader.py`, `connectivity.py`, `matcher.py`, `load_rules.py`, `pipeline.py`, `exporter.py` and `params.py` written from `docs/sld_to_sap_algorithm.md`
-    - SLD to SAP page (`ui/page.py`): parameters, CSV list, Excel model, output folder; stage 1 (CSV only) and stage 2 (with the Excel model) checks re-run automatically and list all errors together, sorted by file; `Convert` enabled only without errors; double-click on an issue copies its CAD coordinates
-    - SLD to SAP tests in `tests/sld_to_sap/test_sld_to_sap.py`

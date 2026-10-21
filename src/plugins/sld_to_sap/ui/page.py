@@ -2,17 +2,19 @@
 from __future__ import annotations
 
 import logging
+import shutil
+import tempfile
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtCore import QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDoubleSpinBox,
+    QHeaderView,
     QFileDialog,
     QGridLayout,
     QGroupBox,
-    QHeaderView,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -28,15 +30,133 @@ from src.plugins.sld_to_sap.params import SldParams
 from src.plugins.sld_to_sap.services.exporter import write_outputs
 from src.plugins.sld_to_sap.services.issues import ERROR
 from src.plugins.sld_to_sap.services.pipeline import ConversionResult, check_structure, convert
+from src.plugins.sld_to_sap.ui.icons import convert_icon, document_icon, message_pixmap
 
 logger = logging.getLogger(__name__)
 
+# Files offered for download at the top of the page (must exist in this folder).
+ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
+LISP_FILE = "SLD2SAP.lsp"
+PDF_FILE = "Rules of SLD2SAP.pdf"
+
+# Message panel: accent color per message level.
+_LEVEL_ACCENT = {"info": "#48B8FF", "ok": "#3FCF8E", "error": "#FF6B6B"}
+_LEVEL_TITLE = {"info": "Messages", "ok": "All good", "error": "Needs attention"}
+
+
+def _panel_style(accent: str) -> str:
+    return f"""
+        QWidget#messagesPanel {{
+            background-color: #0B1728;
+            border: 1px solid {accent};
+            border-left: 5px solid {accent};
+            border-radius: 10px;
+        }}
+        QLabel#assistantIcon {{
+            background: transparent;
+            border: none;
+        }}
+        QLabel#assistantTitle {{
+            color: {accent};
+            font-size: 15pt;
+            font-weight: 700;
+            background: transparent;
+            border: none;
+        }}
+        QLabel#assistantMessage {{
+            color: #F2F8FF;
+            font-size: 12pt;
+            background: transparent;
+            border: none;
+            padding: 2px 0;
+        }}
+    """
+
+
+_DOWNLOAD_STYLE = """
+    QPushButton#downloadButton {
+        background-color: #101C30;
+        color: #E9F0F8;
+        border: 1px solid #31496E;
+        border-radius: 9px;
+        padding: 8px 16px 8px 12px;
+        font-size: 10pt;
+        font-weight: 600;
+        text-align: left;
+    }
+    QPushButton#downloadButton:hover {
+        background-color: #16263F;
+        border-color: #5CC8F0;
+        color: #FFFFFF;
+    }
+    QPushButton#downloadButton:pressed {
+        background-color: #1F3352;
+    }
+    QPushButton#downloadButton:focus {
+        border-color: #FFB224;
+    }
+"""
+
+_CONVERT_STYLE = """
+    QPushButton#convertButton {
+        background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                          stop:0 #2F8FE0, stop:1 #1F6FB5);
+        color: #FFFFFF;
+        border: 1px solid #4BA3EC;
+        border-radius: 12px;
+        padding: 0 30px;
+        font-size: 13pt;
+        font-weight: 700;
+    }
+    QPushButton#convertButton:hover {
+        background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                          stop:0 #3D9CEE, stop:1 #2A7DC8);
+        border-color: #7CC0F5;
+    }
+    QPushButton#convertButton:pressed {
+        background-color: #185C99;
+    }
+    QPushButton#convertButton:focus {
+        border-color: #FFB224;
+    }
+    QPushButton#convertButton:disabled {
+        background-color: #252F3A;
+        color: #8794A2;
+        border: 1px solid #3A4653;
+    }
+"""
+
+
+class _NoWheelDoubleSpinBox(QDoubleSpinBox):
+    """Prevent accidental value changes when the mouse wheel passes over a field."""
+
+    def wheelEvent(self, event):
+        event.ignore()
+
 
 def _spin(value: float, lo: float, hi: float, decimals: int = 3) -> QDoubleSpinBox:
-    box = QDoubleSpinBox()
+    box = _NoWheelDoubleSpinBox()
     box.setRange(lo, hi)
     box.setDecimals(decimals)
     box.setValue(value)
+    # Keep numeric inputs visibly distinct from the dark Conversion parameters panel.
+    box.setStyleSheet("""
+        QDoubleSpinBox {
+            background-color: #111E30;
+            color: #E6EDF7;
+            border: 1px solid #344B68;
+            border-radius: 5px;
+            padding: 5px 8px;
+            min-height: 20px;
+            selection-background-color: #1976D2;
+        }
+        QDoubleSpinBox:hover {
+            border-color: #4B6B91;
+        }
+        QDoubleSpinBox:focus {
+            border: 1px solid #4DB3FF;
+        }
+    """)
     return box
 
 
@@ -77,6 +197,12 @@ class SldToSapPage(QWidget):
         root.setContentsMargins(22, 18, 22, 18)
         root.setSpacing(10)
 
+        # --- header: title on the left, download buttons on the right ----
+        header_row = QHBoxLayout()
+        header_row.setSpacing(16)
+
+        title_col = QVBoxLayout()
+        title_col.setSpacing(4)
         title = QLabel("SLD to SAP")
         title.setObjectName("pageTitle")
         subtitle = QLabel(
@@ -84,8 +210,28 @@ class SldToSapPage(QWidget):
         )
         subtitle.setObjectName("pageSubtitle")
         subtitle.setWordWrap(True)
-        root.addWidget(title)
-        root.addWidget(subtitle)
+        title_col.addWidget(title)
+        title_col.addWidget(subtitle)
+        header_row.addLayout(title_col, 1)
+
+        downloads = QHBoxLayout()
+        downloads.setSpacing(10)
+        self.lisp_button = self._download_button(
+            "Download LISP",
+            document_icon("LSP"),
+            "AutoCAD LISP that exports the TAGGED_LOADS layer to the CSV files (SLD2SAP.lsp).",
+            lambda: self._download(LISP_FILE, "Save the AutoCAD LISP file", "AutoLISP (*.lsp)"),
+        )
+        self.pdf_button = self._download_button(
+            "Open Rules",
+            document_icon("PDF", "#FFB224"),
+            "Open the piping SLD rules which is contracted with the piping department.",
+            self._open_pdf,
+        )
+        downloads.addWidget(self.lisp_button)
+        downloads.addWidget(self.pdf_button)
+        header_row.addLayout(downloads, 0)
+        root.addLayout(header_row)
 
         # --- parameters -------------------------------------------------
         # Visible field hints replace tooltip-only explanations and wrap on narrow windows.
@@ -98,10 +244,6 @@ class SldToSapPage(QWidget):
         self.end_tolerance = _spin(5.0, 0.0, 1e4, 1)
         self.eqz = _spin(0.2, 0.0, 10.0)
         self.friction = _spin(0.15, 0.0, 10.0)
-        # Compact inputs; match the Conversion parameters region background.
-        for field in (self.z0, self.tolerance, self.end_tolerance, self.eqz, self.friction):
-            field.setFixedWidth(125)
-            field.setStyleSheet("QDoubleSpinBox { background-color: #060D19; }")
         fields = [
             ("Z value of the origin of the coordinates in framing elevations (m)", self.z0, "Level of the origin point in XZ or YZ views in SAP2000."),
             ("Tolerance to find beams for distributed loads (mm)", self.tolerance, "A beam within this distance of the load line counts as on it."),
@@ -111,9 +253,9 @@ class SldToSapPage(QWidget):
         ]
         for index, (caption, widget, help_text) in enumerate(fields):
             cell = QWidget()
-            # Match the Conversion parameters panel surface; global QWidget QSS
-            # otherwise paints these field containers with the page background.
-            cell.setStyleSheet("background-color: #060D19;")
+            # Keep each field container visually integrated with its parent group.
+            cell.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+            cell.setStyleSheet("background-color: transparent; border: none;")
             cell_layout = QVBoxLayout(cell)
             cell_layout.setContentsMargins(0, 0, 0, 0)
             cell_layout.setSpacing(4)
@@ -156,31 +298,65 @@ class SldToSapPage(QWidget):
 
         self.connectivity = self._path_row(root, "SAP2000 Connectivity File", self._browse_model)
 
+        # --- messages: the page talking to the user ---------------------
+        self.assistant_box = QWidget()
+        self.assistant_box.setObjectName("messagesPanel")
+        self.assistant_box.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        assistant_layout = QVBoxLayout(self.assistant_box)
+        assistant_layout.setContentsMargins(16, 12, 16, 14)
+        assistant_layout.setSpacing(8)
+
+        assistant_heading = QHBoxLayout()
+        assistant_heading.setSpacing(10)
+        self.assistant_icon = QLabel()
+        self.assistant_icon.setObjectName("assistantIcon")
+        self.assistant_icon.setFixedSize(30, 30)
+        self.assistant_title = QLabel("Messages")
+        self.assistant_title.setObjectName("assistantTitle")
+        assistant_heading.addWidget(self.assistant_icon)
+        assistant_heading.addWidget(self.assistant_title)
+        assistant_heading.addStretch(1)
+        assistant_layout.addLayout(assistant_heading)
+
+        self.status = QLabel()
+        self.status.setObjectName("assistantMessage")
+        self.status.setWordWrap(True)
+        self.status.setMinimumHeight(48)
+        self.status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        assistant_layout.addWidget(self.status)
+        root.addWidget(self.assistant_box)
+        self._say(
+            "Add the SLD CSV files to begin. Detected issues and conversion status will appear here."
+        )
+
         # --- run --------------------------------------------------------
         run_row = QHBoxLayout()
+        run_row.setSpacing(12)
         self.run_button = QPushButton("Convert")
-        self.run_button.setObjectName("primaryButton")
+        self.run_button.setObjectName("convertButton")
+        self.run_button.setIcon(convert_icon())
+        self.run_button.setIconSize(QSize(28, 28))
+        self.run_button.setMinimumSize(260, 52)
+        self.run_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.run_button.setStyleSheet(_CONVERT_STYLE)
         self.run_button.clicked.connect(self._run)
         self.open_button = QPushButton("Open output folder")
+        self.open_button.setMinimumHeight(52)
         self.open_button.setEnabled(False)
         self.open_button.clicked.connect(self._open_out)
-        self.status = QLabel("")
-        self.status.setWordWrap(True)
-        run_row.addWidget(self.run_button)
+        run_row.addStretch(1)
         run_row.addWidget(self.open_button)
-        run_row.addWidget(self.status, 1)
+        run_row.addWidget(self.run_button)
         root.addLayout(run_row)
 
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["Type", "Code", "File", "Index", "Message"])
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.setStretchLastSection(False)
-        self.table.setColumnWidth(0, 85)   # Type
-        self.table.setColumnWidth(1, 90)   # Code
-        self.table.setColumnWidth(2, 150)  # File
-        self.table.setColumnWidth(3, 65)   # Index
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)  # Message
+        header.setStretchLastSection(True)
+        # Restore predictable initial column widths; users may still resize them.
+        for column, width in enumerate((78, 78, 190, 72, 420)):
+            self.table.setColumnWidth(column, width)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.verticalHeader().setVisible(False)
@@ -193,7 +369,79 @@ class SldToSapPage(QWidget):
             box.valueChanged.connect(self._schedule)
         self.connectivity.textChanged.connect(self._schedule)
         self.run_button.setEnabled(False)
-        self.status.setText("Add the SLD CSV files; problems are listed here as soon as they are found.")
+
+    # ------------------------------------------------------------------
+    def _say(self, text: str, level: str = "info") -> None:
+        """Show a message in the Messages panel. level: info | ok | error."""
+        accent = _LEVEL_ACCENT.get(level, _LEVEL_ACCENT["info"])
+        self.assistant_box.setStyleSheet(_panel_style(accent))
+        self.assistant_icon.setPixmap(message_pixmap(accent, 30))
+        self.assistant_title.setText(_LEVEL_TITLE.get(level, "Messages"))
+        self.status.setText(text)
+
+    def _download_button(self, text: str, icon, tooltip: str, slot) -> QPushButton:
+        button = QPushButton(text)
+        button.setObjectName("downloadButton")
+        button.setIcon(icon)
+        button.setIconSize(QSize(22, 22))
+        button.setToolTip(tooltip)
+        button.setMinimumHeight(42)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setStyleSheet(_DOWNLOAD_STYLE)
+        button.clicked.connect(slot)
+        return button
+
+    def _download(self, filename: str, caption: str, file_filter: str) -> None:
+        """Copy a bundled file to a place the user chooses."""
+        source = ASSETS_DIR / filename
+        if not source.is_file():
+            self._say(
+                f"{filename} is not included in this installation (expected in {ASSETS_DIR}). "
+                "Please report it to the developer.",
+                "error",
+            )
+            return
+        target, _ = QFileDialog.getSaveFileName(
+            self, caption, str(Path.home() / "Downloads" / filename), file_filter
+        )
+        if not target:
+            return
+        try:
+            shutil.copyfile(source, target)
+        except OSError as exc:
+            logger.exception("Could not save %s", filename)
+            self._say(f"Could not save {filename}: {exc}", "error")
+            return
+        self._say(f"{filename} was saved to {target}.", "ok")
+
+    def _open_pdf(self) -> None:
+        """Open the bundled rules PDF in the user's PDF viewer.
+
+        A copy in the temp folder is opened, so a viewer never locks a file
+        inside the app folder (which would block auto-updates).
+        """
+        source = ASSETS_DIR / PDF_FILE
+        if not source.is_file():
+            self._say(
+                f"{PDF_FILE} is not included in this installation (expected in {ASSETS_DIR}). "
+                "Please report it to the developer.",
+                "error",
+            )
+            return
+        try:
+            folder = Path(tempfile.gettempdir()) / "StructureLab"
+            folder.mkdir(parents=True, exist_ok=True)
+            target = folder / PDF_FILE
+            shutil.copyfile(source, target)
+        except OSError as exc:
+            # e.g. an older copy is still open in the viewer: open that one
+            logger.warning("Could not refresh the temporary PDF copy: %s", exc)
+            target = Path(tempfile.gettempdir()) / "StructureLab" / PDF_FILE
+            if not target.is_file():
+                self._say(f"Could not open {PDF_FILE}: {exc}", "error")
+                return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(target))):
+            self._say(f"No program was found to open {PDF_FILE}.", "error")
 
     # ------------------------------------------------------------------
     def _path_row(self, layout: QVBoxLayout, caption: str, slot) -> QLineEdit:
@@ -259,7 +507,7 @@ class SldToSapPage(QWidget):
         self.run_button.setEnabled(False)
         if not paths:
             self.table.setRowCount(0)
-            self.status.setText("Add the SLD CSV files.")
+            self._say("Add the SLD CSV files.")
             return
         try:
             if model is None:
@@ -270,20 +518,25 @@ class SldToSapPage(QWidget):
                 stage = "Full check."
         except Exception as exc:
             logger.exception("SLD to SAP check failed")
-            self.status.setText(f"Unexpected failure: {exc}")
+            self._say(f"Unexpected failure: {exc}", "error")
             return
 
         self._show_issues(result.issues)
         n_err = len(result.errors)
         if n_err:
-            self.status.setText(f"{stage} {n_err} error(s) in {len({i.file for i in result.errors})} file(s).")
+            self._say(
+                f"{stage} {n_err} error(s) in {len({i.file for i in result.errors})} file(s).",
+                "error",
+            )
         elif model is None:
-            self.status.setText(f"{stage} No structural errors.")
+            self._say(f"{stage} No structural errors.", "ok")
         else:
             self._result = result
             self.run_button.setEnabled(True)
-            self.status.setText(
-                f"{stage} No errors: {len(result.joints)} joint(s), {len(result.loads)} load record(s) ready."
+            self._say(
+                f"{stage} No errors: {len(result.joints)} joint(s), "
+                f"{len(result.loads)} load record(s) ready.",
+                "ok",
             )
 
     def _run(self) -> None:
@@ -296,29 +549,30 @@ class SldToSapPage(QWidget):
             result = convert(params, paths, model)
             self._show_issues(result.issues)
             if not result.ok:  # inputs changed since the last check
-                self.status.setText(f"{len(result.errors)} error(s). No output was written.")
+                self._say(f"{len(result.errors)} error(s). No output was written.", "error")
                 self.run_button.setEnabled(False)
                 return
-            # Ask for the destination only after conversion and validation succeed.
-            # Start in the Connectivity File's directory as the sensible default.
+            # Ask for the output folder after validation succeeds.
+            default_out = str(Path(model).parent)
             out = QFileDialog.getExistingDirectory(
                 self,
-                "Select folder for Excel output files",
-                str(Path(model).parent),
-                QFileDialog.Option.ShowDirsOnly,
+                "Select output folder",
+                default_out,
             )
             if not out:
-                self.status.setText("Export cancelled; no output files were written.")
+                self._say("Conversion cancelled. No output was written.")
                 return
+
             self._out_files = write_outputs(result, out)
         except Exception as exc:
             logger.exception("SLD to SAP failed")
-            self.status.setText(f"Unexpected failure: {exc}")
+            self._say(f"Unexpected failure: {exc}", "error")
             return
 
         self.open_button.setEnabled(True)
-        self.status.setText(
-            f"Done: {len(result.joints)} joint(s), {len(result.loads)} load record(s) in {out}."
+        self._say(
+            f"Done: {len(result.joints)} joint(s), {len(result.loads)} load record(s) in {out}.",
+            "ok",
         )
 
     def _show_issues(self, issues) -> None:
@@ -336,18 +590,17 @@ class SldToSapPage(QWidget):
                 if i.cad:
                     item.setData(Qt.ItemDataRole.UserRole, f"{i.cad[0]:.3f}, {i.cad[1]:.3f}")
                 self.table.setItem(r, c, item)
-        # Resize to content only when rows exist; an empty table otherwise
-        # reports zero-width contents and can collapse all column widths.
-        if issues:
-            self.table.resizeColumnsToContents()
-            widths = (85, 90, 150, 65)
-            for column, minimum in enumerate(widths):
-                self.table.setColumnWidth(column, max(self.table.columnWidth(column), minimum))
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        self.table.resizeColumnsToContents()
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setStretchLastSection(True)
+        # Restore predictable initial column widths; users may still resize them.
+        for column, width in enumerate((78, 78, 190, 72, 420)):
+            self.table.setColumnWidth(column, width)
 
     def _copy_cad(self, row: int, _col: int) -> None:
         item = self.table.item(row, 0)
         cad = item.data(Qt.ItemDataRole.UserRole) if item else None
         if cad:
             QGuiApplication.clipboard().setText(cad)
-            self.status.setText(f"Copied CAD coordinates: {cad}")
+            self._say(f"Copied CAD coordinates: {cad}")
