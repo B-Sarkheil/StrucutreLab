@@ -1,0 +1,13 @@
+cd "D:\Python Library\StructureLab"
+
+
+git add .
+git commit -m "UI/UX improvement"
+git push origin main
+
+
+
+
+[Environment]::SetEnvironmentVariable("Path",[Environment]::GetEnvironmentVariable("Path", "User") + ";D:\Programs\Git\PortableGit\cmd","User")
+git config --global http.proxy http://kerio:3128
+
