@@ -2,8 +2,16 @@ cd "D:\Python Library\StructureLab"
 
 
 git add .
-git commit -m "SLD2SAP: excel out put format, add overlay loading, multithreading"
+git commit -m "Under Development icon"
 git push origin main
+
+
+
+git add .
+git commit -m "Update Structure Lab"
+git tag -a v1.1.5 -m "Release v1.1.5"
+git push origin main
+git push origin v1.1.5
 
 
 

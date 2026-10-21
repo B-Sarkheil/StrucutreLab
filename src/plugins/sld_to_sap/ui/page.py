@@ -277,6 +277,7 @@ def _spin(value: float, lo: float, hi: float, decimals: int = 3) -> QDoubleSpinB
     box.setDecimals(decimals)
     box.setValue(value)
     box.setMinimumHeight(34)
+    box.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
     # Keep numeric inputs visibly distinct from the dark Conversion parameters panel.
     box.setStyleSheet("""
         QDoubleSpinBox {
