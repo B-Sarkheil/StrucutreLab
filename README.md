@@ -164,7 +164,9 @@ Known technical issues to fix next:
     - SLD to SAP plugin: `SldToSapPlugin` replaces the placeholder in `plugins/registry.py`; services `issues.py`, `geometry.py`, `sld_reader.py`, `connectivity.py`, `matcher.py`, `load_rules.py`, `pipeline.py`, `exporter.py` and `params.py` written from `docs/sld_to_sap_algorithm.md`
     - SLD to SAP page (`ui/page.py`): parameters, CSV list, Excel model, output folder; stage 1 (CSV only) and stage 2 (with the Excel model) checks re-run automatically and list all errors together, sorted by file; `Convert` enabled only without errors; double-click on an issue copies its CAD coordinates
     - SLD to SAP tests in `tests/sld_to_sap/test_sld_to_sap.py`
-    - UI/UX improvements
+    - SLD to SAP plugin: UI/UX improvements
+    - SLD to SAP plugin: backgroundworker for multi threading to prevent lags
+    - add overlay loading
 
 * [1.0.0] - (2026-10-20): 
     - initial shell (PySide6, embedded Python 3.12.10, dark theme, title bar, sidebar)

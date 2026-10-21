@@ -1,6 +1,7 @@
 """Read frames and joints from the SAP2000 'Export to Excel' file (docs section 3.2)."""
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -93,3 +94,40 @@ def load_model(path: str | Path, issues: list[Issue]) -> list[Frame]:
             continue
         frames.append(Frame(name, joints[ji], joints[jj], float(row[f_col["Length"]])))
     return frames
+
+
+# ----------------------------------------------------------------------
+# Cache: the Excel file is read once and reused while the file is unchanged
+# (changing z0 / tolerance / coefficients must not read it again).
+# ----------------------------------------------------------------------
+
+_cache_lock = threading.Lock()
+_cache: dict[tuple[str, int, int], tuple[list[Frame], list[Issue]]] = {}
+_CACHE_MAX = 2
+
+
+def load_model_cached(path: str | Path, issues: list[Issue]) -> list[Frame]:
+    """Same as `load_model`, but keyed on (path, modification time, size).
+
+    Safe to call from several threads: the lock is held while the file is read,
+    so a second caller waits for the first read instead of repeating it.
+    """
+    path = Path(path)
+    try:
+        stat = path.stat()
+    except OSError:
+        return load_model(path, issues)  # reports the problem as M03
+
+    key = (str(path.resolve()), stat.st_mtime_ns, stat.st_size)
+    with _cache_lock:
+        hit = _cache.get(key)
+        if hit is None:
+            local: list[Issue] = []
+            frames = load_model(path, local)
+            hit = (frames, local)
+            if len(_cache) >= _CACHE_MAX:
+                _cache.pop(next(iter(_cache)))
+            _cache[key] = hit
+
+    issues.extend(hit[1])
+    return list(hit[0])

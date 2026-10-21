@@ -1,16 +1,21 @@
 """Whole conversion: CSV files + Connectivity + parameters to joints and loads."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..params import SldParams
-from .connectivity import load_model
+from .connectivity import load_model_cached
 from .geometry import to_model
 from .issues import ERROR, WARNING, Issue
 from .load_rules import LoadRecord, parse_texts, records_for
 from .matcher import match_rect
 from .sld_reader import SldFile, SldRow, discover_files, is_number, read_sld_csv
+
+# Stage names passed to the optional `on_stage` callback (used by the UI to show progress).
+STAGE_MODEL = "model"  # reading the SAP2000 Excel file
+STAGE_SLD = "sld"  # reading the CSV files and matching the loads
 
 
 @dataclass(frozen=True)
@@ -70,11 +75,19 @@ def convert(
     csv_paths: list[str | Path],
     connectivity_path: str | Path | None,
     structure_only: bool = False,
+    on_stage: Callable[[str], None] | None = None,
 ) -> ConversionResult:
     """Run everything. With `structure_only`, only the checks that depend on the CSV
-    files alone are done (no Connectivity file needed, no frame matching)."""
+    files alone are done (no Connectivity file needed, no frame matching).
+
+    `on_stage` (optional) is called with STAGE_MODEL / STAGE_SLD when a phase starts;
+    it may be called from a worker thread."""
     result = ConversionResult()
     issues = result.issues
+
+    def stage(name: str) -> None:
+        if on_stage is not None:
+            on_stage(name)
 
     frames = []
     if structure_only:
@@ -82,8 +95,10 @@ def convert(
     elif connectivity_path is None:
         issues.append(Issue("M03", "Connectivity file was not given."))
     else:
-        frames = load_model(connectivity_path, issues)
+        stage(STAGE_MODEL)
+        frames = load_model_cached(connectivity_path, issues)
 
+    stage(STAGE_SLD)
     names: dict[str, str] = {}  # point name -> "file [Index n]"
     for path in discover_files(csv_paths):
         sld = read_sld_csv(path, issues)
@@ -124,9 +139,11 @@ def convert(
     return result
 
 
-def check_structure(csv_paths: list[str | Path]) -> ConversionResult:
+def check_structure(
+    csv_paths: list[str | Path], on_stage: Callable[[str], None] | None = None
+) -> ConversionResult:
     """Stage 1: every problem that depends on the CSV files only, collected over all files."""
-    return convert(SldParams(z0=0.0), csv_paths, None, structure_only=True)
+    return convert(SldParams(z0=0.0), csv_paths, None, structure_only=True, on_stage=on_stage)
 
 
 def _process_rect(

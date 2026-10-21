@@ -6,7 +6,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, QTimer, QUrl
+from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThreadPool, QTimer, QUrl, Signal
 from PySide6.QtGui import QBrush, QColor, QDesktopServices, QFont, QGuiApplication, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -31,7 +31,13 @@ from PySide6.QtWidgets import (
 from src.plugins.sld_to_sap.params import SldParams
 from src.plugins.sld_to_sap.services.exporter import write_outputs
 from src.plugins.sld_to_sap.services.issues import ERROR
-from src.plugins.sld_to_sap.services.pipeline import ConversionResult, check_structure, convert
+from src.plugins.sld_to_sap.services.pipeline import (
+    STAGE_MODEL,
+    STAGE_SLD,
+    ConversionResult,
+    check_structure,
+    convert,
+)
 from src.plugins.sld_to_sap.ui.icons import (
     convert_icon,
     document_icon,
@@ -39,6 +45,7 @@ from src.plugins.sld_to_sap.ui.icons import (
     message_pixmap,
     trash_icon,
 )
+from src.ui.loading_overlay import LoadingOverlay
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +57,16 @@ PDF_FILE = "Rules of SLD2SAP.pdf"
 # Message panel: accent color per message level.
 _LEVEL_ACCENT = {"info": "#48B8FF", "ok": "#3FCF8E", "error": "#FF6B6B"}
 _LEVEL_TITLE = {"info": "Messages", "ok": "All good", "error": "Needs attention"}
+
+# Loading overlay texts per stage: (title, detail).
+_LOADING_TEXT = {
+    STAGE_MODEL: (
+        "Reading the SAP2000 model…",
+        "Large Excel files take a few seconds. It is read once and reused "
+        "while you change the parameters.",
+    ),
+    STAGE_SLD: ("Checking the SLD files…", "Matching every load to a frame."),
+}
 
 # Issue table colors and column rules.
 _ERROR_COLOR = "#FF6B6B"
@@ -298,12 +315,75 @@ class _FileList(QListWidget):
         painter.end()
 
 
+# ----------------------------------------------------------------------
+# Background work: the checks run in a worker thread so the window never freezes.
+# ----------------------------------------------------------------------
+
+class _TaskSignals(QObject):
+    stage = Signal(int, str)  # version, STAGE_*
+    done = Signal(int, object)  # version, ConversionResult
+    failed = Signal(int, str)  # version, message
+
+
+class _CheckTask(QRunnable):
+    """Runs one validation (stage 1 or full) and reports through signals.
+
+    `version` identifies the request; the page ignores results of old versions.
+    """
+
+    def __init__(self, version: int, params: SldParams, paths: list[str], model: str | None):
+        super().__init__()
+        self.version = version
+        self.params = params
+        self.paths = paths
+        self.model = model
+        self.signals = _TaskSignals()
+
+    @property
+    def has_model(self) -> bool:
+        return self.model is not None
+
+    def run(self) -> None:
+        def on_stage(name: str) -> None:
+            self.signals.stage.emit(self.version, name)
+
+        try:
+            if self.model is None:
+                result = check_structure(self.paths, on_stage=on_stage)
+            else:
+                result = convert(self.params, self.paths, self.model, on_stage=on_stage)
+        except Exception as exc:  # reported to the UI; never crash the worker
+            logger.exception("SLD to SAP check failed")
+            self.signals.failed.emit(self.version, str(exc))
+            return
+        self.signals.done.emit(self.version, result)
+
+
+class _WarmUp(QRunnable):
+    """Import the heavy Excel library once, in the background, when the page opens.
+
+    Its first import costs about a second; doing it here means the first check
+    after choosing the Excel file does not pay for it.
+    """
+
+    def run(self) -> None:
+        try:
+            import openpyxl  # noqa: F401
+            from openpyxl import load_workbook  # noqa: F401
+        except Exception:
+            logger.debug("openpyxl warm-up failed", exc_info=True)
+
+
 class SldToSapPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("page")
         self._out_files: list[Path] = []
         self._result: ConversionResult | None = None
+
+        # Background checks: a new request gets a new version; older results are dropped.
+        self._version = 0
+        self._tasks: dict[int, _CheckTask] = {}
 
         # Checks re-run automatically (debounced) whenever an input changes.
         self._timer = QTimer(self)
@@ -445,7 +525,11 @@ class SldToSapPage(QWidget):
         files_layout.addLayout(buttons)
         root.addWidget(files_box)
 
+        # Give the connectivity-file picker extra breathing room without
+        # changing the spacing between the other sections.
+        root.addSpacing(20)
         self.connectivity = self._path_row(root, "SAP2000 Connectivity File", self._browse_model)
+        root.addSpacing(20)
 
         # --- messages: the page talking to the user ---------------------
         self.assistant_box = QWidget()
@@ -541,6 +625,12 @@ class SldToSapPage(QWidget):
             box.valueChanged.connect(self._schedule)
         self.connectivity.textChanged.connect(self._schedule)
         self.run_button.setEnabled(False)
+
+        # Loading overlay over the whole page (created last so it sits on top).
+        self.overlay = LoadingOverlay(self)
+
+        # Import the Excel library in the background while the user fills the page.
+        QThreadPool.globalInstance().start(_WarmUp())
 
     # ------------------------------------------------------------------
     def _say(self, text: str, level: str = "info") -> None:
@@ -690,25 +780,57 @@ class SldToSapPage(QWidget):
         return paths, (model if model and Path(model).is_file() else None), params
 
     def _validate(self) -> None:
-        """Stage 1 (CSV only) always; stage 2 (with the Excel model) once it is given."""
+        """Start the checks in the background: stage 1 (CSV only) always,
+        stage 2 (with the Excel model) once it is given.
+
+        The result arrives in `_on_checked`. A newer request makes older results obsolete.
+        """
         paths, model, params = self._inputs()
+
+        self._version += 1  # anything still running is now obsolete
         self._result = None
         self.run_button.setEnabled(False)
+
         if not paths:
+            self.overlay.hide_loading()
             self.table.setRowCount(0)
             self._say("Add the SLD CSV files.")
             return
-        try:
-            if model is None:
-                result = check_structure(paths)
-                stage = "Structure check (CSV files only). Select the SAP2000 Excel file to match frames."
-            else:
-                result = convert(params, paths, model)
-                stage = "Full check."
-        except Exception as exc:
-            logger.exception("SLD to SAP check failed")
-            self._say(f"Unexpected failure: {exc}", "error")
+
+        # The overlay appears only if the work lasts longer than a moment.
+        first_stage = STAGE_MODEL if model is not None else STAGE_SLD
+        self.overlay.show_loading(*_LOADING_TEXT[first_stage])
+
+        task = _CheckTask(self._version, params, paths, model)
+        task.signals.stage.connect(self._on_stage)
+        task.signals.done.connect(self._on_checked)
+        task.signals.failed.connect(self._on_failed)
+        self._tasks[task.version] = task
+        QThreadPool.globalInstance().start(task)
+
+    def _on_stage(self, version: int, stage: str) -> None:
+        if version == self._version and stage in _LOADING_TEXT:
+            self.overlay.set_text(*_LOADING_TEXT[stage])
+
+    def _on_failed(self, version: int, message: str) -> None:
+        self._tasks.pop(version, None)
+        if version != self._version:
             return
+        self.overlay.hide_loading()
+        self._say(f"Unexpected failure: {message}", "error")
+
+    def _on_checked(self, version: int, result: ConversionResult) -> None:
+        task = self._tasks.pop(version, None)
+        if version != self._version or task is None:
+            return  # an input changed meanwhile; a newer check is on its way
+        self.overlay.hide_loading()
+
+        has_model = task.has_model
+        stage = (
+            "Full check."
+            if has_model
+            else "Structure check (CSV files only). Select the SAP2000 Excel file to match frames."
+        )
 
         self._show_issues(result.issues)
         n_err = len(result.errors)
@@ -717,7 +839,7 @@ class SldToSapPage(QWidget):
                 f"{stage} {n_err} error(s) in {len({i.file for i in result.errors})} file(s).",
                 "error",
             )
-        elif model is None:
+        elif not has_model:
             self._say(f"{stage} No structural errors.", "ok")
         else:
             self._result = result
@@ -735,6 +857,7 @@ class SldToSapPage(QWidget):
         self._out_files = []
         self.open_button.setEnabled(False)
         try:
+            # The Excel model comes from the cache here, so this stays quick.
             result = convert(params, paths, model)
             self._show_issues(result.issues)
             if not result.ok:  # inputs changed since the last check
