@@ -2,7 +2,7 @@ cd "D:\Python Library\StructureLab"
 
 
 git add .
-git commit -m "UI/UX improvement"
+git commit -m "SLD2SAP: excel out put format, add overlay loading, multithreading"
 git push origin main
 
 
