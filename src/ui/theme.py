@@ -263,6 +263,80 @@ STYLESHEET = Template("""
         font-size: 8pt;
     }
 
+        /* =====================================================
+       About page
+       ===================================================== */
+
+    QFrame#aboutCard[active="true"] {
+        background: $ink_hi;
+        border: 1px solid $rule;
+    }
+
+    QFrame#aboutCard[active="true"] QLabel#aboutTitle {
+        color: $paper;
+    }
+
+    QLabel#aboutPageTitle {
+        color: $paper;
+        font-family: "$font_title";
+        font-size: 28pt;
+        font-weight: 600;
+    }
+
+    QLabel#aboutPageTagline {
+        color: $steel;
+        font-size: 10pt;
+    }
+
+    QLabel#aboutChipVersion {
+        color: $cyan;
+        background: $ink_deep;
+        border: 1px solid $cyan;
+        border-radius: 11px;
+        padding: 3px 14px;
+        font-family: "$font_title";
+        font-size: 10pt;
+        font-weight: 600;
+    }
+
+    QLabel#aboutChip {
+        color: $steel;
+        background: $ink_deep;
+        border: 1px solid $rule_hi;
+        border-radius: 11px;
+        padding: 3px 14px;
+        font-size: 9.5pt;
+    }
+
+    QFrame#aboutDivider {
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 rgba(0, 0, 0, 0), stop:0.5 $rule_hi, stop:1 rgba(0, 0, 0, 0));
+    }
+
+    QLabel#aboutCopyright {
+        color: $paper;
+        font-size: 10pt;
+        font-weight: 600;
+    }
+
+    QLabel#aboutHeading {
+        color: $cyan;
+        font-family: "$font_title";
+        font-size: 11pt;
+        font-weight: 600;
+    }
+
+    QLabel#aboutContactCaption {
+        color: $steel_dim;
+        font-size: 8pt;
+    }
+
+    QLabel#aboutContactValue {
+        color: $paper;
+        font-size: 10pt;
+        font-weight: 600;
+    }
+
 
     /* =====================================================
        Main Content

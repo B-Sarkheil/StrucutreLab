@@ -16,9 +16,11 @@ from PySide6.QtWidgets import (
 
 from ..plugins.registry import load_plugins
 from .home_page import HomePage
-from .navigation import HOME_PAGE, Navigation
 from .theme import LOGO_ICO
 from .widgets import FadeStackedWidget
+from .about_page import AboutPage
+from .navigation import ABOUT_PAGE, HOME_PAGE, Navigation
+
  
 logger = logging.getLogger(__name__)
  
@@ -168,6 +170,7 @@ class MainWindow(QMainWindow):
  
     def __init__(self, version: str):
         super().__init__()
+        self._version = version
  
         # ---------------------------------------------------------
         # Plugins and pages
@@ -259,29 +262,39 @@ class MainWindow(QMainWindow):
         self._pages[key] = page
         self.pages.addWidget(page)
  
+
+    def _create_page(self, key: str) -> QWidget | None:
+        """Build the page for `key`; return None if it cannot be built."""
+
+        if key == ABOUT_PAGE:
+            return AboutPage(version=self._version)
+
+        plugin = self._plugins.get(key)
+
+        if plugin is None:
+            logger.error("Unknown page requested: %s", key)
+            return None
+
+        try:
+            return plugin.create_widget()
+        except Exception:
+            logger.exception("Could not create the page of plugin '%s'", key)
+            return None
+
     def show_page(self, key: str) -> None:
-        """Show the page for `key`, creating a plugin page on first use."""
- 
+        """Show the page for `key`, creating it on first use."""
+
         page = self._pages.get(key)
- 
+
         if page is None:
-            plugin = self._plugins.get(key)
- 
-            if plugin is None:
-                logger.error("Unknown page requested: %s", key)
+            page = self._create_page(key)
+
+            if page is None:
                 self.navigation.set_current(self._current_key)
                 return
- 
-            try:
-                page = plugin.create_widget()
-            except Exception:
-                logger.exception("Could not create the page of plugin '%s'", key)
-                self.navigation.set_current(self._current_key)
-                return
- 
+
             self._add_page(key, page)
- 
+
         self.pages.fade_to(page)
         self._current_key = key
         self.navigation.set_current(key)
- 

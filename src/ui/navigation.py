@@ -16,8 +16,10 @@ from PySide6.QtWidgets import (
 
 from ..plugins.base import Plugin
 from .theme import AMBER
+from .widgets import ClickableFrame
 
 HOME_PAGE = "home"
+ABOUT_PAGE = "about"
 
 
 class NavButton(QPushButton):
@@ -82,6 +84,7 @@ class Navigation(QWidget):
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
         self._buttons: dict[str, QPushButton] = {}
+        self._about_card: QFrame | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 14, 10, 14)
@@ -117,10 +120,14 @@ class Navigation(QWidget):
         layout.addStretch()
 
         # About
-        about = QFrame()
+        about = ClickableFrame()
         about.setObjectName("aboutCard")
         about.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
-        about.setCursor(Qt.CursorShape.PointingHandCursor)
+        about.setToolTip("About Structure Lab")
+        about.clicked.connect(
+            lambda: self.page_requested.emit(ABOUT_PAGE)
+        )
+        self._about_card = about
 
         about_layout = QVBoxLayout(about)
         about_layout.setContentsMargins(10, 10, 10, 10)
@@ -161,6 +168,9 @@ class Navigation(QWidget):
         about_layout.addWidget(about_version)
         about_layout.addWidget(copyright_label)
 
+        for child in (about_icon, about_title, about_version, copyright_label):
+            child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
         layout.addWidget(about)
 
     def _add_item(
@@ -183,12 +193,37 @@ class Navigation(QWidget):
         layout.addWidget(button)
 
     def set_current(self, key: str) -> None:
-        """Highlight the item for `key`."""
+        """Highlight the item for `key` (a plugin, Home or About)."""
+
+        if key == ABOUT_PAGE:
+            # The buttons are exclusive: release all of them to show About.
+            self._group.setExclusive(False)
+
+            for button in self._buttons.values():
+                button.setChecked(False)
+
+            self._group.setExclusive(True)
+            self._set_about_active(True)
+            return
 
         button = self._buttons.get(key)
 
         if button is not None:
             button.setChecked(True)
+
+        self._set_about_active(False)
+
+    def _set_about_active(self, active: bool) -> None:
+        """Mark the About card as the current page (styled in theme.py)."""
+
+        card = self._about_card
+
+        if card is None:  # called before the card is built
+            return
+
+        card.setProperty("active", active)
+        card.style().unpolish(card)
+        card.style().polish(card)
 
     @classmethod
     def create_nav_button(
