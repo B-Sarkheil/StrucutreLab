@@ -238,7 +238,7 @@ class HeroBanner(QWidget):
     """
 
     HEIGHT = 168
-    FADE_MS = 900
+    FADE_MS = 5000
 
     LOGO_SIZE = 124
     LOGO_MARGIN_RIGHT = 44

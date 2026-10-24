@@ -6,6 +6,7 @@ import sys
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
+from .core.logging_setup import setup_logging
 from .plugins.registry import register_builtin_plugins
 from .ui.main_window import MainWindow
 from .ui.theme import LOGO_ICO, apply_theme
@@ -16,6 +17,8 @@ APP_USER_MODEL_ID = "StructureLab.App"
 
 def main() -> int:
     """Start the Structure Lab application."""
+
+    setup_logging()
 
     # Without this, Windows groups the app under python.exe and the
     # taskbar shows the Python icon instead of ours.

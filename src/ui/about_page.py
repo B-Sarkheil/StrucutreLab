@@ -71,7 +71,7 @@ class LogoEmblem(QWidget):
     SIZE = 148
     LOGO_SIZE = 72
     SPIN_MS = 6000
-    INTRO_MS = 900
+    INTRO_MS = 4000
 
     def __init__(self, parent=None):
         super().__init__(parent)

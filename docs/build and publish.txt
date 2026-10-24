@@ -1,0 +1,9 @@
+cd "D:\Python Library\StructureLab"
+
+
+.\runtime\python\python.exe tools\build.py --installer
+.\runtime\python\python.exe tools\publish.py
+
+
+
+.\runtime\python\python.exe tools\build.py --installer --iscc "C:\Users\b.sarkheil\AppData\Local\Programs\Inno Setup 7\ISCC.exe"    ====> to prepare setup file
