@@ -350,7 +350,7 @@ class _CheckTask(QRunnable):
 
         try:
             if self.model is None:
-                result = check_structure(self.paths, on_stage=on_stage)
+                result = check_structure(self.paths, on_stage=on_stage, z0=self.params.z0)
             else:
                 result = convert(self.params, self.paths, self.model, on_stage=on_stage)
         except Exception as exc:  # reported to the UI; never crash the worker

@@ -1,6 +1,7 @@
 """Read frames and joints from the SAP2000 'Export to Excel' file (docs section 3.2)."""
 from __future__ import annotations
 
+import math
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +27,22 @@ def _name(value) -> str:
     return str(value).strip()
 
 
+def _cell(row: tuple, index: int):
+    """Cell of a row, or None when the row is shorter than the sheet header."""
+    return row[index] if index < len(row) else None
+
+
+def _number(value) -> float | None:
+    """A finite number from a cell, or None when the cell is empty / not numeric."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
 def _find_header(rows: list[tuple], required: list[str]) -> tuple[int, dict[str, int]] | None:
     for r, row in enumerate(rows[:10]):
         cells = [str(c).strip() if c is not None else "" for c in row]
@@ -35,7 +52,11 @@ def _find_header(rows: list[tuple], required: list[str]) -> tuple[int, dict[str,
 
 
 def load_model(path: str | Path, issues: list[Issue]) -> list[Frame]:
-    """Frames with their joint coordinates (metres). Problems go to `issues`."""
+    """Frames with their joint coordinates (metres). Problems go to `issues`.
+
+    M03 / M04 mean the file cannot be used at all (the list is empty); M05, M06 and M07
+    are about single frames / joints, which are skipped.
+    """
     from openpyxl import load_workbook
 
     path = Path(path)
@@ -71,28 +92,46 @@ def load_model(path: str | Path, issues: list[Issue]) -> list[Frame]:
 
     j_row, j_col = jh
     joints: dict[str, tuple[float, float, float]] = {}
+    bad_joints: set[str] = set()  # joints already reported as M07
     for row in joint_rows[j_row + 2 :]:
-        if row[j_col["Joint"]] is None:
+        if _cell(row, j_col["Joint"]) is None:
             continue
-        joints[_name(row[j_col["Joint"]])] = (
-            float(row[j_col["GlobalX"]]),
-            float(row[j_col["GlobalY"]]),
-            float(row[j_col["GlobalZ"]]),
+        name = _name(row[j_col["Joint"]])
+        coords = (
+            _number(_cell(row, j_col["GlobalX"])),
+            _number(_cell(row, j_col["GlobalY"])),
+            _number(_cell(row, j_col["GlobalZ"])),
         )
+        if any(c is None for c in coords):
+            issues.append(
+                Issue("M07", f"Joint {name}: GlobalX, GlobalY and GlobalZ must be numbers.", path.name)
+            )
+            bad_joints.add(name)
+            continue
+        joints[name] = coords  # type: ignore[assignment]
 
     frames: list[Frame] = []
     for row in frame_rows[f_row + 2 :]:
-        if row[f_col["Frame"]] is None:
+        if _cell(row, f_col["Frame"]) is None:
             continue
         name = _name(row[f_col["Frame"]])
-        ji, jj = _name(row[f_col["JointI"]]), _name(row[f_col["JointJ"]])
+        ji = _name(_cell(row, f_col["JointI"]))
+        jj = _name(_cell(row, f_col["JointJ"]))
+        if ji in bad_joints or jj in bad_joints:
+            continue  # the joint was already reported (M07)
         missing = [j for j in (ji, jj) if j not in joints]
         if missing:
             issues.append(
                 Issue("M05", f"Frame {name}: joint {', '.join(missing)} is not in the Joint sheet.", path.name)
             )
             continue
-        frames.append(Frame(name, joints[ji], joints[jj], float(row[f_col["Length"]])))
+        length = _number(_cell(row, f_col["Length"]))
+        if length is None or length <= 0:
+            issues.append(
+                Issue("M06", f"Frame {name}: Length must be a positive number.", path.name)
+            )
+            continue
+        frames.append(Frame(name, joints[ji], joints[jj], length))
     return frames
 
 

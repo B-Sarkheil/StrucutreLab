@@ -11,7 +11,7 @@ class SldParams:
     z0: float  # real level (model, m) of the origin point in X / Y elevation files
     tolerance_mm: float = 10.0  # "on one line / plane" test (perpendicular to the beam)
     end_tolerance_mm: float = 5.0  # load may stick out of the beam ends by this much
-    eqz_coef: float = 0.2  # vertical earthquake coefficient (0.2 * Sds, ASCE 7-10)
+    eqz_coef: float = 1.0  # vertical earthquake coefficient (EQ.Z); same default as the UI
     friction_coef: float = 0.15  # pipe / beam friction
 
     @property

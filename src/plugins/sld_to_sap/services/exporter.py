@@ -11,7 +11,15 @@ TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "templates"
 
 
 def _frame_value(name: str):
-    return int(name) if name.isdigit() else name
+    """Frame name for the Excel cell.
+
+    Written as a number only when the name is the canonical form of an integer
+    ("9", "128"), exactly as the MATLAB tool wrote it. Every other name ("007", "B12",
+    "9.5") stays text, so the name SAP receives is always the name it exported.
+    """
+    if name.isascii() and name.isdigit() and str(int(name)) == name:
+        return int(name)
+    return name
 
 
 def write_outputs(result: ConversionResult, out_dir: str | Path) -> list[Path]:

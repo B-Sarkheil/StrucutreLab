@@ -93,8 +93,18 @@ def _read_rows(path: Path, issues: list[Issue]) -> list[SldRow]:
 
         try:
             index = int(float(record[col_index]))
-        except ValueError:
+        except (ValueError, OverflowError):
+            # Keep going with the line number of the file so the row can still be checked
+            # and located, but report it: the Index column must be a number.
             index = number
+            issues.append(
+                Issue(
+                    "S17",
+                    "The Index value is not a number (the number shown is the line of the file).",
+                    path.name,
+                    index,
+                )
+            )
         coords: list[float | None] = []
         bad = False
         for c in col_coords:
@@ -117,8 +127,14 @@ def _read_rows(path: Path, issues: list[Issue]) -> list[SldRow]:
 def read_sld_csv(path: str | Path, issues: list[Issue]) -> SldFile | None:
     """Parse one file and find its origin row. Problems are appended to `issues`."""
     path = Path(path)
+    before = len(issues)
     rows = _read_rows(path, issues)
     if not rows:
+        if len(issues) == before:
+            # A header with no data rows (or only blank rows): nothing was reported yet.
+            issues.append(
+                Issue("S01", "The file has no data rows; origin point (x / y / z) not found.", path.name)
+            )
         return None
 
     marks: list[tuple[SldRow, int]] = []  # (row, text column) of every x / y / z word

@@ -28,7 +28,7 @@ _ANCHOR = {
 @dataclass(frozen=True)
 class LoadToken:
     token: str  # upper case
-    value: float  # kgf/m
+    value: float  # kgf/m, never negative
 
 
 @dataclass(frozen=True)
@@ -64,10 +64,17 @@ def parse_texts(
         if not is_number(raw):
             issues.append(Issue("S14", f"The value after '=' is not a number: '{text}'.", file, index, cad))
             continue
-        tokens.append(LoadToken(token, float(raw)))
+        value = float(raw)
+        if value < 0:
+            issues.append(Issue("S18", f"The load value must not be negative: '{text}'.", file, index, cad))
+            continue
+        tokens.append(LoadToken(token, value))
 
+    # V= and FV= are counted together. More than one is always an error; "none" is reported
+    # only when nothing else is wrong in this rectangle (a V= that was rejected above already
+    # has its own message).
     n_v = sum(t.token in VERTICAL for t in tokens)
-    if n_v != 1 and len(issues) == before:
+    if n_v > 1 or (n_v == 0 and len(issues) == before):
         issues.append(Issue("S11", "V= (or FV=) must appear exactly once.", file, index, cad))
     for name in LATERAL:
         if sum(t.token == name for t in tokens) > 1:

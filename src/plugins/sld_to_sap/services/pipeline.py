@@ -17,6 +17,10 @@ from .sld_reader import SldFile, SldRow, discover_files, is_number, read_sld_csv
 STAGE_MODEL = "model"  # reading the SAP2000 Excel file
 STAGE_SLD = "sld"  # reading the CSV files and matching the loads
 
+# Connectivity problems after which no frame matching is attempted (the model is unusable);
+# every rectangle would otherwise get a misleading "no frame found" (M01).
+_MODEL_UNUSABLE = ("M03", "M04")
+
 
 @dataclass(frozen=True)
 class JointRow:
@@ -90,16 +94,20 @@ def convert(
             on_stage(name)
 
     frames = []
+    have_model = False  # frames may be matched only when a usable model was read
     if structure_only:
         connectivity_path = None
     elif connectivity_path is None:
         issues.append(Issue("M03", "Connectivity file was not given."))
     else:
         stage(STAGE_MODEL)
+        first_new = len(issues)
         frames = load_model_cached(connectivity_path, issues)
+        have_model = not any(i.code in _MODEL_UNUSABLE for i in issues[first_new:])
 
     stage(STAGE_SLD)
-    names: dict[str, str] = {}  # point name -> "file [Index n]"
+    # point name (case-insensitive, like SAP2000) -> "file [Index n]"
+    names: dict[str, str] = {}
     for path in discover_files(csv_paths):
         sld = read_sld_csv(path, issues)
         if sld is None:
@@ -111,19 +119,22 @@ def convert(
             elif row.has_partial_rect:
                 issues.append(Issue("S04", "Incomplete rectangle coordinates.", sld.name, row.index, row.cad))
             elif row.is_rect:
-                _process_rect(sld, row, frames, params, result, bool(connectivity_path))
+                _process_rect(sld, row, frames, params, result, have_model)
             else:
                 joint = _build_joint(sld, row, params, issues)
                 if joint is None:
                     continue
                 where = f"{sld.name} [Index {row.index}]"
-                if joint.name in names:
+                key = joint.name.casefold()
+                if key in names:
                     issues.append(
-                        Issue("S10", f"Point name '{joint.name}' is repeated (also in {names[joint.name]}).",
+                        Issue("S10",
+                              f"Point name '{joint.name}' is repeated (also in {names[key]}); "
+                              "names are not case sensitive.",
                               sld.name, row.index, row.cad)
                     )
                     continue
-                names[joint.name] = where
+                names[key] = where
                 result.joints.append(joint)
 
     seen: dict[tuple[float, float, float], JointRow] = {}
@@ -140,10 +151,16 @@ def convert(
 
 
 def check_structure(
-    csv_paths: list[str | Path], on_stage: Callable[[str], None] | None = None
+    csv_paths: list[str | Path],
+    on_stage: Callable[[str], None] | None = None,
+    z0: float = 0.0,
 ) -> ConversionResult:
-    """Stage 1: every problem that depends on the CSV files only, collected over all files."""
-    return convert(SldParams(z0=0.0), csv_paths, None, structure_only=True, on_stage=on_stage)
+    """Stage 1: every problem that depends on the CSV files only, collected over all files.
+
+    `z0` is the value the user typed; it is needed only so that warning W01 (two points with
+    the same coordinates) compares the real coordinates of points of X / Y and Z files.
+    """
+    return convert(SldParams(z0=z0), csv_paths, None, structure_only=True, on_stage=on_stage)
 
 
 def _process_rect(
