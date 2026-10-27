@@ -2,7 +2,7 @@ cd "D:\Python Library\StructureLab"
 
 
 git add .
-git commit -m "About page"
+git commit -m "Release note system while updating"
 git push origin main
 
 

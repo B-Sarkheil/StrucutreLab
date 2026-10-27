@@ -11,7 +11,7 @@ from src.plugins.sld_to_sap.plugin import SldToSapPlugin
 # sidebar as a planned tool (opens the "Under development" page). The
 # real plugin and all its code stay in the project; set True to bring
 # it back.
-AUTO_DESIGN_ENABLED = False
+AUTO_DESIGN_ENABLED = True
 
 _plugins: list[Plugin] = []
 
