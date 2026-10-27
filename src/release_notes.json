@@ -1,0 +1,27 @@
+{
+  "releases": [
+    {
+      "version": "1.1.6",
+      "date": "2026-10-26",
+      "title": "More reliable SLD to SAP checks",
+      "items": [
+        {
+          "tag": "new",
+          "text": "This window: after an update, Structure Lab now shows what changed in the new version."
+        },
+        {
+          "tag": "improved",
+          "text": "SLD to SAP reports more problems together before conversion: invalid Index values, negative load values, frames with zero length, and point names that differ only in letter case."
+        },
+        {
+          "tag": "improved",
+          "text": "The EQ.Z coefficient now starts at 1."
+        },
+        {
+          "tag": "fixed",
+          "text": "Loads on frames drawn in the reverse direction are now matched correctly."
+        }
+      ]
+    }
+  ]
+}

@@ -5,14 +5,17 @@ Runs with the small bootstrap Python (``bootstrap\\python\\pythonw.exe``). See d
 Every start:
   1. Read settings.json and latest.json from the server share (3-5 s timeout, fail-open:
      if the share is not reachable, skip the update and just start the installed version).
-  2. If the server has a newer app: download the needed zips to a temp folder, verify sha256,
-     extract next to the final folder, rename atomically, run the self-check
-     (``src.__main__.ping_app()`` with the new runtime + new app). On failure the new folders
-     are deleted and the old version stays (automatic rollback).
+  2. If the server has a newer app: ask the user (the installed app shows the "Update available"
+     window: Update now / Later; for a mandatory update: Update now / Exit). If the window cannot
+     be shown, a plain Windows message box asks instead. Only after "Update now": download the
+     needed zips to a temp folder, verify sha256, extract next to the final folder, rename
+     atomically, run the self-check (``src.__main__.ping_app()`` with the new runtime + new app).
+     On failure the new folders are deleted and the old version stays (automatic rollback).
+     ``--update-only`` / ``--yes`` update without asking (for IT scripts).
   3. Start the app with the runtime's pythonw.exe: ``src.__main__.main()``.
   4. The update log stays on the user's PC: ``<root>\\logs\\launcher.log``.
 
-Layout (root = the folder that contains ``bootstrap``; normally %LocalAppData%\\StructureLab):
+Layout (root = the folder that contains ``bootstrap``; normally %LocalAppData%\\Structure Lab):
   bootstrap\\   python + launcher.py + initial.json
   runtime\\<id>\\   embedded Python + libraries (python.exe at the top of this folder)
   app\\<version>\\  contains the ``src`` package
@@ -34,7 +37,7 @@ import zipfile
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-BOOTSTRAP_VERSION = "1.0.0"
+BOOTSTRAP_VERSION = "1.1.0"
 
 ROOT = Path(os.environ.get("STRUCTURELAB_ROOT") or Path(__file__).resolve().parent.parent)
 STATE_FILE = ROOT / "state.json"
@@ -46,6 +49,7 @@ LOCK_FILE = ROOT / "update.lock"
 
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 LOCK_STALE_SEC = 15 * 60
+PROMPT_ANSWERS = ("UPDATE", "LATER", "EXIT")
 
 log = logging.getLogger("launcher")
 
@@ -198,6 +202,8 @@ _CHECK = ("import sys; sys.path.insert(0, sys.argv[1]); import src.__main__ as m
           "sys.exit(0 if m.ping_app() else 1)")
 _RUN = ("import sys; sys.path.insert(0, sys.argv[1]); from src.__main__ import main; "
         "sys.exit(main())")
+_ASK = ("import sys; sys.path.insert(0, sys.argv[1]); from src.__main__ import ask_update; "
+        "sys.exit(ask_update(sys.argv[2]))")
 
 
 def child_env() -> dict:
@@ -243,6 +249,81 @@ def start_app(state: dict) -> int:
     return code
 
 
+# ---------------------------------------------------------------- asking the user
+def fallback_prompt(current: str, new: str, mandatory: bool) -> str:
+    """Plain Windows message box, used when the installed app cannot show its own window."""
+    try:
+        import ctypes
+
+        if mandatory:
+            ctypes.windll.user32.MessageBoxW(
+                0, f"A required update is available (version {new}).\n"
+                   "Structure Lab will update now.", "Structure Lab", 0x40)  # MB_ICONINFORMATION
+            return "update"
+        answer = ctypes.windll.user32.MessageBoxW(
+            0, f"Structure Lab {new} is available (installed: {current}).\n\nUpdate now?",
+            "Structure Lab", 0x24)  # MB_YESNO | MB_ICONQUESTION
+        return "update" if answer == 6 else "later"  # 6 = IDYES
+    except Exception:  # noqa: BLE001 - no UI at all
+        log.exception("Fallback prompt failed")
+        return "update" if mandatory else "later"
+
+
+def ask_user(state: dict, latest: dict, new_ver: str, mandatory: bool):
+    """Ask whether to update. Returns (choice, dialog_process).
+
+    choice is "update", "later" or "exit". After "update" the dialog process is still alive
+    (it shows "Updating...") and must be closed with close_dialog() when the update is done.
+    """
+    notes = latest.get("release_notes")
+    request = {"current": state["app"], "new": new_ver, "mandatory": mandatory,
+               "notes": notes if isinstance(notes, list) else []}
+    try:
+        TMP_DIR.mkdir(parents=True, exist_ok=True)
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        request_file = TMP_DIR / "update_request.json"
+        request_file.write_text(json.dumps(request), encoding="utf-8")
+        folder = app_dir(state["app"])
+        exe = runtime_python(state["runtime"], gui=False)  # python.exe + no window + stdout pipe
+        err = open(LOG_DIR / "update_prompt_stderr.log", "w", encoding="utf-8")  # noqa: SIM115
+        proc = subprocess.Popen(
+            [str(exe), "-c", _ASK, str(folder), str(request_file)], cwd=folder, env=child_env(),
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=err, text=True,
+            creationflags=NO_WINDOW,
+        )
+        answer = ""
+        while True:  # blocks while the user decides; ends at EOF when the window process dies
+            line = proc.stdout.readline()
+            if not line:
+                break
+            if line.strip() in PROMPT_ANSWERS:
+                answer = line.strip()
+                break
+        if answer == "UPDATE":
+            return "update", proc
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.terminate()
+        if answer:
+            return answer.lower(), None
+        log.warning("Update window ended without an answer (code %s, see update_prompt_stderr.log)",
+                    proc.returncode)
+    except Exception:  # noqa: BLE001 - any failure: ask with a plain message box
+        log.exception("Could not show the update window")
+    return fallback_prompt(state["app"], new_ver, mandatory), None
+
+
+def close_dialog(proc) -> None:
+    if proc is None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=5)
+    except Exception:  # noqa: BLE001
+        log.warning("Could not close the update window", exc_info=True)
+
+
 # ---------------------------------------------------------------- update
 def acquire_lock() -> bool:
     try:
@@ -271,13 +352,15 @@ def cleanup(state: dict) -> None:
     shutil.rmtree(TMP_DIR, ignore_errors=True)
 
 
-def maybe_update(state: dict, latest: dict, settings: dict) -> dict:
+def maybe_update(state: dict, latest: dict, settings: dict, silent: bool = False):
+    """Returns (state, start_app). start_app is False only when the user chose Exit
+    on a mandatory update."""
     try:
         app_t, rt_t = latest["app"], latest["runtime"]
         new_ver, new_rt = str(app_t["version"]), str(rt_t["id"])
     except (KeyError, TypeError):
         log.warning("latest.json has an unexpected structure; update skipped")
-        return state
+        return state, True
 
     if parse_version(latest.get("min_bootstrap_version", "0")) > parse_version(BOOTSTRAP_VERSION):
         need = str(latest["min_bootstrap_version"])
@@ -287,19 +370,34 @@ def maybe_update(state: dict, latest: dict, settings: dict) -> dict:
             save_json_atomic(STATE_FILE, state)
             message_box("A new Structure Lab version needs a new installer.\n"
                         "Please ask IT to run the latest Setup.")
-        return state
+        return state, True
 
-    local = parse_version(state["app"]) if is_installed(state) else (0,)
+    installed = is_installed(state)
+    local = parse_version(state["app"]) if installed else (0,)
     if parse_version(new_ver) <= local:
         log.info("Up to date (app %s, server %s)", state["app"], new_ver)
-        return state
+        return state, True
     key = f"{new_ver}+{new_rt}"
     if key in state["rejected"]:
         log.info("Version %s was rejected by the self-check before; skipped", key)
-        return state
+        return state, True
+
+    dialog = None
+    if installed and not silent:  # a broken or missing install is repaired without asking
+        mandatory = bool(latest.get("mandatory"))
+        choice, dialog = ask_user(state, latest, new_ver, mandatory)
+        if choice == "exit":
+            log.info("User chose Exit on the mandatory update to %s", new_ver)
+            return state, False
+        if choice != "update":
+            log.info("User postponed the update to %s", new_ver)
+            return state, True
+        log.info("User accepted the update to %s", new_ver)
+
     if not acquire_lock():
         log.info("Another instance is updating; skipped")
-        return state
+        close_dialog(dialog)
+        return state, True
 
     server = Path(settings["server_dir"])
     created: list[Path] = []
@@ -320,7 +418,7 @@ def maybe_update(state: dict, latest: dict, settings: dict) -> dict:
             state["rejected"].append(key)
             save_json_atomic(STATE_FILE, state)
             log.error("Update %s rejected; rolled back to app %s", key, state["app"])
-            return state
+            return state, True
 
         state["previous"] = {"app": state["app"], "runtime": state["runtime"]}
         state["app"], state["runtime"] = new_ver, new_rt
@@ -333,7 +431,8 @@ def maybe_update(state: dict, latest: dict, settings: dict) -> dict:
             shutil.rmtree(d, ignore_errors=True)
     finally:
         release_lock()
-    return state
+        close_dialog(dialog)
+    return state, True
 
 
 # ---------------------------------------------------------------- entry point
@@ -349,7 +448,10 @@ def main(argv: list[str] | None = None) -> int:
             settings = load_settings()
             latest = read_latest(settings)
             if latest:
-                state = maybe_update(state, latest, settings)
+                silent = "--update-only" in argv or "--yes" in argv
+                state, go = maybe_update(state, latest, settings, silent=silent)
+                if not go:
+                    return 0
         if "--update-only" in argv:
             return 0
         if not is_installed(state):

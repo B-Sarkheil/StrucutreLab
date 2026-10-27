@@ -8,7 +8,7 @@ git push origin main
 
 
 git add .
-git commit -m "Develope setup & update procedures"
+git commit -m "Sync sld_to_sap_algorithm.md with codes"
 git tag -a v1.1.5 -m "Release v1.1.5"
 git push origin main
 git push origin v1.1.5

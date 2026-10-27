@@ -1,9 +1,51 @@
-cd "D:\Python Library\StructureLab"
+0. Prepare setup file
+	cd "D:\Python Library\StructureLab"
+	.\runtime\python\python.exe tools\build.py --installer --iscc "C:\Users\b.sarkheil\AppData\Local\Programs\Inno Setup 7\ISCC.exe"
 
 
-.\runtime\python\python.exe tools\build.py --installer
-.\runtime\python\python.exe tools\publish.py
+1. Unit test
+	cd "D:\Python Library\StructureLab"
+	.\runtime\python\python.exe -m pytest
+	.\runtime\python\python.exe -m src
+
+
+2. Change version into 
+	src\version.py
+	
+
+3. Write release notes into src\release_notes.json
+	{
+	  "version": "1.1.7",
+	  "date": "2026-10-28",
+	  "title": "عنوان کوتاه",
+	  "items": [
+		{"tag": "new", "text": "..."},
+		{"tag": "fixed", "text": "..."}
+		{"tag": "improved", "text": "..."}
+	  ]
+	}
+	
+4. New python libraries
+	install it first in VS Code
+	update runtime\requirements.txt
+	update pyproject.toml
+
+	
+5. README.md
+	Finish change logs
+	recored release date
+	
+	
+6. Build
+	cd "D:\Python Library\StructureLab"
+	.\runtime\python\python.exe tools\build.py
+	.\runtime\python\python.exe tools\build.py --mandatory     ==> force users to update
+	
+
+7. Publish into server
+	cd "D:\Python Library\StructureLab"
+	.\runtime\python\python.exe tools\publish.py
 
 
 
-.\runtime\python\python.exe tools\build.py --installer --iscc "C:\Users\b.sarkheil\AppData\Local\Programs\Inno Setup 7\ISCC.exe"    ====> to prepare setup file
+*********** See https://claude.ai/chat/5d559358-1fdf-4601-bf87-d1c65da26cff for more ****************

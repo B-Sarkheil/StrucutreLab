@@ -2,14 +2,18 @@
 
 Usage (project runtime):
   .\\runtime\\python\\python.exe tools\\build.py             # packages only -> dist\\publish\\
+  .\\runtime\\python\\python.exe tools\\build.py --mandatory # users must update (no "Later" button)
   .\\runtime\\python\\python.exe tools\\build.py --installer # + dist\\stage and Setup.exe (needs Inno Setup 6)
 
 Outputs
   dist\\publish\\app-<version>.zip        src\\ (every file under src/, not only .py)
   dist\\publish\\runtime-<id>.zip         copy of runtime\\python (dev tools removed); rebuilt only
                                          when runtime\\requirements.txt or the Python version changes
-  dist\\publish\\latest.json              written LAST, so a half-built release is never seen
-  dist\\stage\\                           what the installer puts in %LocalAppData%\\StructureLab
+  dist\\publish\\latest.json              written LAST, so a half-built release is never seen.
+                                         Besides the packages it carries `release_notes` (the newest
+                                         entries of src\\release_notes.json, shown in the update
+                                         window) and, with --mandatory, `"mandatory": true`.
+  dist\\stage\\                           what the installer puts in %LocalAppData%\\Structure Lab
   dist\\StructureLab-Setup.exe           with --installer
 
 The folder dist\\publish is what publish.py copies to the server share.
@@ -33,13 +37,15 @@ PUBLISH = DIST / "publish"
 STAGE = DIST / "stage"
 RUNTIME_SRC = ROOT / "runtime" / "python"
 CONFIG = Path(__file__).with_name("release_config.json")
+NOTES_FILE = ROOT / "src" / "release_notes.json"
+NOTES_IN_LATEST = 10  # newest entries copied into latest.json
 
 # top-level names inside site-packages that must not ship to users
 DEV_ONLY = ("pytest", "_pytest", "pytestqt", "pytest_qt", "pluggy", "iniconfig", "ruff",
             "mypy", "mypyc", "mypy_extensions", "sklearn", "scikit_learn", "coverage")
 
 
-# The dev _pth contains "..\.." (project root, so that `python -m src` works). Not for users.
+# The dev _pth contains "..\..\" (project root, so that `python -m src` works). Not for users.
 PTH_PACKAGED = "python312.zip\r\n.\r\nimport site\r\n"
 
 
@@ -51,7 +57,7 @@ def pth_name() -> str:
 
 
 def read_config() -> dict:
-    cfg = {"server_dir": "", "channel": "stable", "min_bootstrap_version": "1.0.0"}
+    cfg = {"server_dir": "", "channel": "stable", "min_bootstrap_version": "1.1.0"}
     cfg.update(json.loads(CONFIG.read_text(encoding="utf-8-sig")))
     return cfg
 
@@ -66,6 +72,27 @@ def read_version() -> str:
     if pp and pp.group(1) != version:
         sys.exit(f"Version mismatch: src/version.py={version}, pyproject.toml={pp.group(1)}")
     return version
+
+
+def version_key(text: object) -> tuple[int, ...]:
+    return tuple(int(n) for n in re.findall(r"\d+", str(text))) or (0,)
+
+
+def read_release_notes(version: str) -> list[dict]:
+    """The newest entries of src/release_notes.json, as they are written there.
+
+    The file is optional for the build (an update window without notes is fine), but a missing
+    entry for the version being built is reported, because it is usually a forgotten step."""
+    try:
+        data = json.loads(NOTES_FILE.read_text(encoding="utf-8-sig"))
+        releases = [r for r in data["releases"] if isinstance(r, dict) and r.get("version")]
+    except (OSError, ValueError, KeyError, TypeError):
+        print(f"notes    WARNING: cannot read {NOTES_FILE}; the update window will have no notes")
+        return []
+    releases.sort(key=lambda r: version_key(r["version"]), reverse=True)
+    if not any(version_key(r["version"]) == version_key(version) for r in releases):
+        print(f"notes    WARNING: src/release_notes.json has no entry for {version}")
+    return releases[:NOTES_IN_LATEST]
 
 
 def runtime_id() -> str:
@@ -108,7 +135,7 @@ def zip_tree(base: Path, out: Path, prefix: str = "", skip=lambda rel: False) ->
     os.replace(tmp, out)
 
 
-def build_packages(version: str, cfg: dict) -> tuple[Path, Path, str]:
+def build_packages(version: str, cfg: dict, mandatory: bool = False) -> tuple[Path, Path, str]:
     PUBLISH.mkdir(parents=True, exist_ok=True)
     for old in PUBLISH.glob("latest*.json"):
         old.unlink()  # a stale latest.json must never point at half-built files
@@ -134,7 +161,11 @@ def build_packages(version: str, cfg: dict) -> tuple[Path, Path, str]:
         "min_bootstrap_version": cfg["min_bootstrap_version"],
         "app": {"version": version, "file": app_zip.name, "sha256": sha256_of(app_zip)},
         "runtime": {"id": rid, "file": rt_zip.name, "sha256": sha256_of(rt_zip)},
+        "release_notes": read_release_notes(version),
     }
+    if mandatory:
+        latest["mandatory"] = True
+        print("mandatory  users cannot postpone this update")
     name = "latest.json" if cfg["channel"] == "stable" else f"latest-{cfg['channel']}.json"
     (PUBLISH / name).write_text(json.dumps(latest, indent=2), encoding="utf-8")  # LAST
     print(f"{name} written")
@@ -199,13 +230,15 @@ def build_installer(version: str, rid: str, iscc: str | None) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--installer", action="store_true", help="also stage files and build Setup.exe")
+    ap.add_argument("--mandatory", action="store_true",
+                    help="users must update: the update window has no Later button")
     ap.add_argument("--iscc", help="path to ISCC.exe")
     args = ap.parse_args()
 
     cfg = read_config()
     version = read_version()
     print(f"Structure Lab {version}")
-    app_zip, rt_zip, rid = build_packages(version, cfg)
+    app_zip, rt_zip, rid = build_packages(version, cfg, mandatory=args.mandatory)
     if args.installer:
         build_stage(version, cfg, app_zip, rt_zip, rid)
         build_installer(version, rid, args.iscc)

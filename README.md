@@ -7,7 +7,7 @@ First real tool: **Auto Design**, automatic structural section optimization (Gen
 Design context lives in these docs in the project knowledge:
 
 * `claude/engineering-platform-decisions.md`: bootstrap / runtime / app layers, auto-update from the server, IT constraints.
-* `docs/contract.md`: the frozen contract between the launcher and the app (layout on the user machine, server share, update rules).
+* `docs/contract.md`: the frozen contract between the launcher and the app (layout on the user machine, server share, update rules, the update question).
 * `claude/project-plan-structural-optimization.md`: Auto Design plan (Phase 1 GA, Phase 2 ML surrogate lab, Phase 3 general model).
 * `docs/sld_to_sap_algorithm.md`: the SLD to SAP algorithm guide. The code is the reference; if they disagree, the guide must be fixed (or, after a decision, the code).
 
@@ -17,16 +17,21 @@ The user's tested MATLAB program that drives SAP2000 (`connectToSAP.m`, `openSap
 
 ```text
 StructureLab/
-├── bootstrap/          launcher.py, installer.iss (kept stable; contract in docs/contract.md)
+├── bootstrap/          launcher.py (1.1.0), installer.iss (kept stable; contract in docs/contract.md)
 ├── runtime/            embedded Python 3.12.10 x64 (runtime/python/, libraries in Lib/site-packages) + requirements.txt
 ├── src/
-│   ├── __main__.py     entry point: main() (calls setup_logging first), ping_app()
-│   ├── version.py      THE single place to change the version (now 1.1.6); pyproject.toml must show the same value
+│   ├── __main__.py     entry point: main() (calls setup_logging first), ask_update() (update window, called by the launcher), ping_app()
+│   ├── version.py      THE single place to change the version (now 1.1.6); pyproject.toml will show the same value automatically
+│   ├── release_notes.json   hand-written release notes of every version (shown after an update and in the update window)
 │   ├── core/           app-wide services
 │   │   ├── paths.py, config.py, logging_setup.py, storage.py   (small helpers / stubs)
+│   │   ├── release_notes.py    reads release_notes.json, decides which notes the user has not seen (no Qt)
 │   │   ├── sap_client.py       SAP2000 connection (pythonnet), shared by all SAP plugins
 │   │   └── vendor/sap2000_v23/SAP2000v1.dll    bundled OAPI assembly (user must place it)
 │   ├── ui/             shell only: main_window, navigation, home_page, about_page, widgets, theme, loading_overlay, assets/icons/
+│   │   ├── sheet_dialog.py          base of the small modal windows (drawing-sheet look, framed version cards with colored tags, busy bar)
+│   │   ├── release_notes_dialog.py  "What's new" window after an update (Got it button)
+│   │   └── update_dialogs.py        "Update available" window shown by the launcher (Update now / Later / Exit)
 │   └── plugins/        base.py, registry.py, placeholder.py, <plugin>/
 │       │ 
 │       ├── auto_design/
@@ -62,6 +67,10 @@ StructureLab/
 ├── docs/
 ├── tests/
 │    ├── auto_design/
+│    ├── bootstrap/
+│    │   └── test_launcher.py        update flow of the launcher with a fake server (no Qt, no Windows needed)
+│    ├── core/
+│    │   └── test_release_notes.py
 │    └── sld_to_sap/
 │        └── test_sld_to_sap.py
 │
@@ -74,31 +83,39 @@ StructureLab/
 
 ## How the app works
 
-* `__main__.main()`: `setup_logging()` → QApplication → `apply_theme` → `register_builtin_plugins()` → `MainWindow` → `app.exec()`.
+* `__main__.main()`: `setup_logging()` → QApplication → `apply_theme` → `register_builtin_plugins()` → `MainWindow` → 300 ms later `MainWindow.show_release_notes_if_needed()` → `app.exec()`.
 * **Plugin contract** (`plugins/base.py`): `name` (unique key), `title`, `icon`, `description`, `available` (False = planned, not built), and `create_widget() -> QWidget`.
 * **Registry** (`plugins/registry.py`): explicit and simple. `register_builtin_plugins()` lists all plugins in navigation order (Auto Design, SLD to SAP, PDMS to SAP, Auto CPS); `load_plugins()` returns them. No auto-discovery yet. **Release switch:** `AUTO_DESIGN_ENABLED` (currently `False`): while False, Auto Design is registered as a `PlaceholderPlugin` with the same name, title, icon and description, so it appears in the sidebar and on Home as a planned tool and opens the "Under development" page. The real `AutoDesignPlugin` and all its code stay in the project; set the switch to `True` to bring it back.
 * **Shell** (`ui/`): `MainWindow` reads the registry and passes the plugins to `Navigation` (sidebar) and `HomePage`. Clicking a sidebar item or a card calls `MainWindow.show_page(key)`. Home is built at startup; each plugin page is created lazily on first open and kept in a `FadeStackedWidget` (a `QStackedWidget` that fades the new page in). If `create_widget()` fails, the error is logged and the current page stays. The About page is a shell page (not a plugin) opened from the About card at the bottom of the sidebar.
 * **Home page caveat:** `home_page.py` has a fixed list `plugin_order = ["auto_design", "sld_to_sap", "pdms_to_sap", "auto_cps"]`; only plugins named there get a card or row. A new plugin must be added to that list until it is replaced by the registry order (see known issues).
 * **Not implemented yet (shown as planned, open the "Under development" page):** Auto Design (hidden by the release switch), Auto CPS and PDMS to SAP.
 * **Visual language** ("structural drawing sheet"): all colors are tokens at the top of `ui/theme.py` (blueprint-ink surfaces, drafting-cyan linework, amber as the single signal color for active/hover/focus). Titles use Bahnschrift, body uses Segoe UI. Most widgets are styled by `objectName` in the stylesheet; cards, the hero banner and the sidebar marker are painted in code (`ui/widgets.py`, `ui/home_page.py`, `ui/navigation.py`) and read the same tokens. Available tools get large cards, planned tools get dashed rows. The hero banner fades its logo in once over 5 s (`HeroBanner.FADE_MS`), which is the only unprompted motion in the app; the About page logo emblem spins while visible. `ui/loading_overlay.py` is the shared loading overlay (delay 200 ms, minimum visible 450 ms, blocks input to the page below).
+* **Small modal windows** (`ui/sheet_dialog.py`): "What's new" and "Update available" are frameless dialogs drawn on the About page's `SheetCard` (same blueprint grid and corner marks). `SheetDialog` is the base (heading, divider, buttons, scrollable list of framed version cards that grows up to 300 px, drag by any free area, indeterminate `BusyBar` drawn in code); `ReleaseNotesDialog` and `UpdatePromptDialog` only fill it.
 
-## Release and update system (done, first release 1.1.5 installed and started on the user's PC)
+## Release notes
+
+* **Source:** `src/release_notes.json`, written by hand for every release: `{"releases": [{"version", "date", "title", "items": [{"tag": "new|improved|fixed", "text"}]}]}`. An item may also be a plain string (tag `improved`). Entries without a version or without items are ignored. Write what a *user* needs to know, not the code changes (those go to the README change log). A version without an entry has no window.
+* **After an update** (`core/release_notes.py`, `MainWindow.show_release_notes_if_needed()`): the last version whose notes the user has seen is stored in `<data dir>\user_state.json` (`last_seen_version`; not `state.json`, which belongs to the launcher). If `__version__` is higher, the notes of every version in between (newest first) open in `ReleaseNotesDialog`; **Got it** closes it and the version is stored. A fresh install shows nothing (the current version is just stored). The stored version never goes backwards (rollback safe). A broken notes file or any error shows nothing and never blocks the app.
+* **Not in the update window:** the notes are shown once, after the update, in "What's new"; the update window only shows the two versions and the question. `build.py` still copies the newest 10 entries into `latest.json` (`release_notes`) and the launcher passes them to `ask_update()`, which ignores them for now (kept for a possible later use).
+* **Look:** each version is a framed card titled with its version and date; the item tags are NEW (green), IMPROVED (blue) and FIXED (warm); colors are defined in `ui/sheet_dialog.py` (`TAG_STYLES`).
+
+## Release and update system (done, first release 1.1.5 installed and started on the user's PC; update question added in launcher 1.1.0)
 
 Three layers (details and frozen rules in `docs/contract.md`). Installed copy: `%LocalAppData%\Structure Lab\` (with a space; `core/paths.py` has `APP_NAME = "Structure Lab"` and uses `STRUCTURELAB_ROOT` when the launcher sets it).
 
 * **Installer** (`bootstrap/installer.iss`, Inno Setup 6 or 7): per-user, no admin rights, silent mode `/VERYSILENT`, no entry in Programs and Features (`Uninstallable=no`). Copies bootstrap (small Python + `launcher.py` + `initial.json`), the first runtime and the first app version, plus `settings.json` (server path; never overwritten by a re-install). Start Menu shortcut (and optional desktop) runs `bootstrap\python\pythonw.exe bootstrap\launcher.py`, with `AppUserModelID` `StructureLab.App` and the icon `app.ico`. The Setup.exe is given to users once; it is **not** part of the server folder.
-* **Launcher** (`bootstrap/launcher.py`, standard library only): on every start reads `latest.json` from the server share with a 5 s timeout (unreachable server: skip, start the installed version). If the server app version is higher: downloads the needed zips to `tmp\`, checks sha256, extracts beside the target, renames atomically, runs the self-check (`ping_app()` with the new runtime and the new app), then switches `state.json`. A failed self-check deletes the new folders and records the version in `rejected`. Keeps only the current and the previous app/runtime. A lock file prevents two instances updating at once. The app runs as a child process with the runtime's `pythonw.exe`; if it exits within 6 s a message box is shown. The update never restarts a running app: the new version starts at the next launch.
-* **Logs** are local only: `%LocalAppData%\Structure Lab\logs\` (`launcher.log` for updates, `app.log` for the app, `app_stderr.log` for startup errors). `core/logging_setup.append_server_log` is an unused stub; `core/config.Settings` only has `server_dir` and `channel` (the contract's `network_timeout_sec` is read by the launcher, not by the app).
+* **Launcher** (`bootstrap/launcher.py`, `BOOTSTRAP_VERSION = "1.1.0"`, standard library only): on every start reads `latest.json` from the server share with a 5 s timeout (unreachable server: skip, start the installed version). If the server app version is higher (and not rejected before) it **asks the user**: it starts the installed app with `ask_update()` (`python.exe`, no console window), which shows the "Update available" window (installed version in the warm color → new version in cyan, the question, **Update now** / **Later**; for a mandatory update **Update now** / **Exit** and Esc is ignored) and prints `UPDATE`, `LATER` or `EXIT` on stdout. `LATER` starts the installed version (asked again next start); `EXIT` ends without starting; `UPDATE` switches the same window to "Updating…" while the launcher downloads the needed zips to `tmp\`, checks sha256, extracts beside the target, renames atomically, runs the self-check (`ping_app()` with the new runtime and the new app), switches `state.json` and then terminates the window. A failed self-check deletes the new folders and records the version in `rejected`; if any update step fails the installed version starts (even when mandatory). If the window cannot run (an old app without `ask_update`, a crash, no display) a plain Windows message box asks instead (Yes/No; mandatory: information, then update). No question is asked when the installed version is missing or damaged (repaired directly) or with `--update-only` / `--yes` (IT scripts). Keeps only the current and the previous app/runtime. A lock file prevents two instances updating at once. The app runs as a child process with the runtime's `pythonw.exe`; if it exits within 6 s a message box is shown. The update never restarts a running app: the new version starts at the next launch.
+* **Logs** are local only: `%LocalAppData%\Structure Lab\logs\` (`launcher.log` for updates, `app.log` for the app, `app_stderr.log` and `update_prompt_stderr.log` for startup errors). `core/logging_setup.append_server_log` is an unused stub; `core/config.Settings` only has `server_dir` and `channel` (the contract's `network_timeout_sec` is read by the launcher, not by the app).
 * **Server share:** `\\be-sarkheil\Share\Structure Lab` (read access for users). Holds `latest.json`, `app-<version>.zip`, `runtime-<id>.zip`. Old zips stay there (publish.py never deletes); only the ones in `latest.json` are needed.
-* **`tools/build.py`:** reads the version from `src/version.py` (stops if `pyproject.toml` shows another one), zips all files under `src/`, builds the runtime zip from `runtime/python` only when the runtime id changes (id = hash of `runtime/requirements.txt` + Python DLL name; dev packages, `Scripts/` and `__pycache__` are left out; the dev `python312._pth` with `..\..` is replaced by a clean one), writes `latest.json` last. With `--installer` it also builds `dist\stage` and `dist\StructureLab-Setup.exe` (ISCC is found in the usual Inno Setup 6/7 folders or with `--iscc`).
+* **`tools/build.py`:** reads the version from `src/version.py` (stops if `pyproject.toml` shows another one), zips all files under `src/`, builds the runtime zip from `runtime/python` only when the runtime id changes (id = hash of `runtime/requirements.txt` + Python DLL name; dev packages, `Scripts/` and `__pycache__` are left out; the dev `python312._pth` with `..\..` is replaced by a clean one), writes `latest.json` last. `latest.json` also carries `release_notes` (newest 10 entries of `src/release_notes.json`; a warning is printed when there is no entry for the version being built) and, with `--mandatory`, `"mandatory": true`. With `--installer` it also builds `dist\stage` and `dist\StructureLab-Setup.exe` (ISCC is found in the usual Inno Setup 6/7 folders or with `--iscc`).
 * **`tools/publish.py`:** copies the zips from `dist\publish` to the server (skips files that are already there), `latest.json` last.
-* **`min_bootstrap_version`** in `release_config.json` is the version of the *launcher*, not of the app. Change it only when `launcher.py` changes and a new Setup is required (users are then told once to ask IT).
+* **`min_bootstrap_version`** in `release_config.json` is the version of the *launcher* (`BOOTSTRAP_VERSION`), not of the app. It is now `1.1.0`. Change it only when `launcher.py` changes and a new Setup is required (users with an older launcher are then told once to ask IT).
 
-How to release a new version (e.g. 1.1.6), no new Setup needed:
+How to release a new version (e.g. 1.1.7), no new Setup needed:
 
-1. Change the code and test. 2. Set the new version in `src/version.py` (and `pyproject.toml` unless it reads the version from `version.py`). 3. `.\runtime\python\python.exe tools\build.py` 4. `.\runtime\python\python.exe tools\publish.py`. Users get it at their next launch. A rejected version is not retried: publish a higher version to fix it. Going back means re-publishing the old code with a higher number.
+1. Change the code and test. 2. Set the new version in `src/version.py` (and `pyproject.toml` unless it reads the version from `version.py`). 3. Add the entry of the new version to `src/release_notes.json`. 4. `.\runtime\python\python.exe tools\build.py` (add `--mandatory` when users must not postpone it) 5. `.\runtime\python\python.exe tools\publish.py`. Users are asked at their next launch. A rejected version is not retried: publish a higher version to fix it. Going back means re-publishing the old code with a higher number. A mandatory flag applies to the newest version on the server only: a user who is several versions behind is forced only if the newest one is mandatory.
 
-First release / new Setup: `.\runtime\python\python.exe tools\build.py --installer [--iscc "<path>\ISCC.exe"]`, then `publish.py`, then hand `dist\StructureLab-Setup.exe` to the users. If you add a library, install it into `runtime\python` first (`pip install -r runtime\requirements.txt`); the runtime id changes and users download the new runtime once.
+First release / new Setup: `.\runtime\python\python.exe tools\build.py --installer [--iscc "<path>\ISCC.exe"]`, then `publish.py`, then hand `dist\StructureLab-Setup.exe` to the users. If you add a library, install it into `runtime\python` first (`pip install -r runtime\requirements.txt`); the runtime id changes and users download the new runtime once. **Launcher 1.1.0 (the update question) reaches a PC only through a new Setup**; until then that PC still updates silently (launcher 1.0.0 stops updating once `min_bootstrap_version` is 1.1.0 and tells the user to ask IT).
 
 ## Auto Design (current state; hidden from users, see the release switch)
 
@@ -149,22 +166,24 @@ Converts the piping SLD (CSV files written by `SLD2SAP.lsp` from the AutoCAD lay
 * The UI was run only on the installed 1.1.5 start-up; the issue table and the conversion on real data were not reviewed with the user yet. Report any problem.
 * The tests use the worked examples of the guide (section 10) and synthetic files. The comparison with the real successful MATLAB run (second sample set, guide section 9.14: 5 joints and 116 load records, bit-for-bit) has **not** been done in this code: the sample files and the two MATLAB outputs must be supplied.
 * The guide lists cases missing from the samples: reversed frame, `HT` / `LT`, point load in a plan with a height value, point with an extra value, `FV=`. A small complete sample set with MATLAB output is still needed (guide section 14).
-* `pytest` could not be installed where the tests were written; they were run with a minimal stand-in. Run them once with real pytest on the project runtime. If a test relies on the old `SldParams` default `eqz_coef = 0.2`, give it the value explicitly.
+* `tests/sld_to_sap/test_sld_to_sap.py` was written where `pytest` could not be installed and was run with a minimal stand-in; run it once with real pytest on the project runtime (pytest is now installed in the dev runtime, see Development). If a test relies on the old `SldParams` default `eqz_coef = 0.2`, give it the value explicitly.
 * The code-versus-guide review of 2026-10-25 is closed: the guide (now numbered with the app version, 1.1.6) matches the code. The new checks (S17 for `Index`, S18, case-insensitive S10, M06, M07, M01 suppression, frame-name rule) and the `eqz_coef` default of 1 may break the old `tests/sld_to_sap/test_sld_to_sap.py` (not reviewed); run it and update the expectations.
 
 ### Unverified (release system)
 
-* The launcher's update flow was tested with a fake server on Linux (good update, bad sha256, failed self-check with rollback, no server). On the user's PC only the installation and the first start were seen working. A real update (1.1.5 → 1.1.6) and a runtime update (new library) have **not** been tried on a user machine yet.
+* The launcher's update flow (1.0.0) was tested with a fake server on Linux (good update, bad sha256, failed self-check with rollback, no server). On the user's PC only the installation and the first start were seen working. A real update (1.1.5 → 1.1.6) and a runtime update (new library) have **not** been tried on a user machine yet.
+* **Not run yet (written without a display or Windows):** the update question of launcher 1.1.0 (`ask_user` / `ask_update` / `UpdatePromptDialog`, the stdout protocol, closing the "Updating…" window, the Windows message-box fallback) and the mandatory mode. `tests/bootstrap/test_launcher.py` covers the launcher logic with a fake server and a fake app (accepted, later, mandatory exit, silent mode, repair without a question, bad sha256 closes the window, protocol, fallbacks) and passed with a minimal stand-in runner; the real windows were never seen. Check: look of both windows, `Later` / `Exit` / `Update now`, the busy bar, the window really closing when the new app starts, and that a window opened by the installed app does not show a Python icon in the taskbar.
+* The "What's new" window (`ReleaseNotesDialog`) was never seen on a display: check the transparent rounded corners, the notes area height with few and many notes, and dragging.
 * The shortcut icon (`app.ico` in the installer, found by `build.py` as the first `.ico` under `src/`, or `"icon"` in `release_config.json`) needs a new Setup build to be checked.
 
 ## Rules
 
 * The shell (`src/ui/`) never contains plugin-specific logic; a plugin never controls the shell. Plugin UI lives in `plugins/<name>/ui/`, business logic in `plugins/<name>/services/`. Code shared by several plugins (like the SAP connection) lives in `src/core/`.
-* Do not remove or rename `main()` and `ping_app()` without updating the launcher contract (`ping_app()` is the post-update self-check; it must work without a display). Changes to `docs/contract.md` or `launcher.py` break installed copies and need a new Setup.
-* The version number lives in `src/version.py` only (plus `pyproject.toml`, checked by `build.py`). Do not type it anywhere else.
+* Do not remove or rename `main()`, `ping_app()` and `ask_update()` without updating the launcher contract (`ping_app()` is the post-update self-check; it must work without a display). Changes to `docs/contract.md` or `launcher.py` break installed copies and need a new Setup (and a higher `BOOTSTRAP_VERSION` / `min_bootstrap_version`).
+* The version number lives in `src/version.py` only (plus `pyproject.toml`, checked by `build.py`). Do not type it anywhere else. Every release gets an entry in `src/release_notes.json` (for users) and in the change log below (for developers).
 * Create planned files (e.g. further Auto Design `services/` modules) only when they are actually implemented. Every package folder needs an `__init__.py`, otherwise `pyproject.toml` (`packages.find include = ["src*"]`) skips it.
 * Always use the project runtime; `python` / `py` may not exist globally.
-* Tests of a plugin live in `tests/<plugin name>/`.
+* Tests of a plugin live in `tests/<plugin name>/`; tests of shell services in `tests/core/`; tests of the launcher in `tests/bootstrap/`.
 * After changing any code, state which file changed and its exact folder location (project instruction).
 
 ## Development
@@ -172,12 +191,15 @@ Converts the piping SLD (CSV files written by `SLD2SAP.lsp` from the AutoCAD lay
 * Windows, VSCode, project Python: `D:\Python Library\StructureLab\runtime\python\python.exe`.
 * Run (or F5 with the "Structure Lab" launch config, module `src`): `.\runtime\python\python.exe -m src` (works because the dev `python312._pth` contains `..\..`; do not copy this file into a release).
 * Install deps: `.\runtime\python\python.exe -m pip install -r .\runtime\requirements.txt`
-* Tests / lint: `.\runtime\python\python.exe -m pytest` (one plugin: `.\runtime\python\python.exe -m pytest tests\sld_to_sap`) and `.\runtime\python\python.exe -m ruff check .`
+* Dev tools (installed in the dev runtime only; they are in `DEV_ONLY` of `build.py`, so they never reach users and do not change the runtime id; do not add them to `runtime/requirements.txt`): `.\runtime\python\python.exe -m pip install pytest pytest-qt ruff` (behind the company proxy add `--proxy http://kerio:3128`).
+* Tests / lint: `.\runtime\python\python.exe -m pytest` (one folder: `.\runtime\python\python.exe -m pytest tests\sld_to_sap`, `tests\core`, `tests\bootstrap`) and `.\runtime\python\python.exe -m ruff check .`
+* To see the "What's new" window without a release: write `{"last_seen_version": "1.1.5"}` into `user_state.json` in the data folder (normally `%LocalAppData%\Structure Lab`) and start the app.
+* To see the update window alone: call `ask_update(<request.json>)` from `src.__main__` with a file `{"current": "1.1.5", "new": "1.1.6", "mandatory": false, "notes": [...]}` (it prints the answer on stdout).
 * Release: see "Release and update system" above (`tools\build.py`, `tools\publish.py`; Inno Setup 6/7 only on the build PC, e.g. `C:\Users\b.sarkheil\AppData\Local\Programs\Inno Setup 7\ISCC.exe`).
 
 ## Status
 
-Done: project structure, embedded runtime, VSCode debugging, dark-themed shell (title bar, sidebar, Home), plugin registry, page switching, Auto Design step 1 (settings form) and step 2 (sections table with filter, bulk Yes/No, undo/redo, counters and Excel import/export; hidden from users by the release switch), SAP2000 connection layer (untested), SLD to SAP services (complete algorithm, tested on the guide's examples) and its single-page UI with automatic, collected error checking, about page, loading overlay, and the full release system (installer, launcher with auto-update from the server share, build and publish tools). Version 1.1.5 was the first release; 1.1.6 is prepared (not yet built or published).
+Done: project structure, embedded runtime, VSCode debugging, dark-themed shell (title bar, sidebar, Home), plugin registry, page switching, Auto Design step 1 (settings form) and step 2 (sections table with filter, bulk Yes/No, undo/redo, counters and Excel import/export; hidden from users by the release switch), SAP2000 connection layer (untested), SLD to SAP services (complete algorithm, tested on the guide's examples) and its single-page UI with automatic, collected error checking, about page, loading overlay, and the full release system (installer, launcher with auto-update from the server share, build and publish tools). Version 1.1.5 was the first release; 1.1.6 is prepared (not yet built or published) and adds the release notes window, the update question with a mandatory mode (launcher 1.1.0, needs a new Setup) and the SLD to SAP check changes.
 
 Known technical issues to fix next:
 
@@ -191,24 +213,30 @@ Known technical issues to fix next:
 * Step 2 has no automated test yet. `compile_name_filter` (in `sections_page.py`) and `services/sections_excel.py` are pure logic and easy to cover in `tests/auto_design/`.
 * SLD to SAP runs its checks in a background worker (see change log); re-check on a large model.
 * `server_sim/` was removed (it only held a sample `latest.json`).
+* A mandatory update is decided by the newest version on the server only (see the release steps).
 
 ## Next session
 
-1. Release 1.1.6 (or the next one) with `build.py` + `publish.py` and check on a user PC that the update happens at the next launch (`logs\launcher.log`). Then try one runtime change (new library).
-2. Rebuild Setup with the icon and check the Start Menu / taskbar icon.
-3. SLD to SAP: run `tests/sld_to_sap/test_sld_to_sap.py` with real pytest and fix expectations changed by the 2026-10-25 code changes.
-4. SLD to SAP: supply the second sample set (CSV files, Connectivity, the two MATLAB outputs) so a test compares the 5 joints and 116 load records bit-for-bit; then a small complete sample set for the missing cases (guide section 14).
-5. When Auto Design resumes: put `SAP2000v1.dll` (from the v23 install) in `src/core/vendor/sap2000_v23/`, check `pythonnet` in `pyproject.toml`, and run step 2 against a real SAP2000 (send any traceback); ask the user to extract from the v23 DLL (MATLAB `methodsview`) `cPropFrame.GetNameList`, `cFile.OpenFile`, `cSapModel.GetVersion`, `cHelper.GetObject` and fix `sap_client.py` to match; set `AUTO_DESIGN_ENABLED = True`.
-6. Build the next Auto Design wizard step after the sections table (the user will describe it). Eventually: GA logic in `plugins/auto_design/services/`, evaluation behind `evaluate(x)`, storing every evaluation from day one (see the plan doc).
-7. Ideas the user declined for Auto Design step 2, do not build unless asked again: smart grouping by section family or dimensions, remembering the last choice per section name, saved templates, a warning when a role has no section. Also declined for now: a background "new version is ready, restart" notice while the app is open.
+1. Look at the two new windows (What's new, Update available; both modes) and fix whatever the display shows (see "Unverified (release system)").
+2. Build a new Setup (launcher 1.1.0, `min_bootstrap_version` 1.1.0) with `build.py --installer`, install it on the user's PC, then release 1.1.6 (or the next one) with `build.py` + `publish.py` and check on a user PC that the question appears at the next launch and the update works (`logs\launcher.log`). Try a mandatory release (`--mandatory`) and one runtime change (new library).
+3. Check the Start Menu / taskbar icon of the new Setup.
+4. SLD to SAP: run `tests/sld_to_sap/test_sld_to_sap.py` with real pytest and fix expectations changed by the 2026-10-25 code changes.
+5. SLD to SAP: supply the second sample set (CSV files, Connectivity, the two MATLAB outputs) so a test compares the 5 joints and 116 load records bit-for-bit; then a small complete sample set for the missing cases (guide section 14).
+6. When Auto Design resumes: put `SAP2000v1.dll` (from the v23 install) in `src/core/vendor/sap2000_v23/`, check `pythonnet` in `pyproject.toml`, and run step 2 against a real SAP2000 (send any traceback); ask the user to extract from the v23 DLL (MATLAB `methodsview`) `cPropFrame.GetNameList`, `cFile.OpenFile`, `cSapModel.GetVersion`, `cHelper.GetObject` and fix `sap_client.py` to match; set `AUTO_DESIGN_ENABLED = True`.
+7. Build the next Auto Design wizard step after the sections table (the user will describe it). Eventually: GA logic in `plugins/auto_design/services/`, evaluation behind `evaluate(x)`, storing every evaluation from day one (see the plan doc).
+8. Ideas the user declined for Auto Design step 2, do not build unless asked again: smart grouping by section family or dimensions, remembering the last choice per section name, saved templates, a warning when a role has no section. Also declined for now: a background "new version is ready, restart" notice while the app is open.
 
 ## Change log
-* [1.1.6] - (2026-10-26):
+* [1.1.6] - (2026-10-27):
     - version raised to 1.1.6 (`version.py`; `pyproject.toml` must show the same); `docs/sld_to_sap_algorithm.md` carries the app version number
     - `plugins/sld_to_sap/params.py`: default `eqz_coef` changed from 0.2 to 1.0 (same as the UI field)
     - `plugins/sld_to_sap/services/`: `sld_reader.py` (S17 for a bad `Index`, S01 for a file with no data rows), `connectivity.py` (M06, M07), `load_rules.py` (S18; `V`/`FV` twice is S11), `exporter.py` (frame name is a number only if canonical integer), `pipeline.py` (case-insensitive S10, no M01 when the model is unusable, `check_structure(z0)`); `ui/page.py` passes `z0` to `check_structure`
     - `docs/sld_to_sap_algorithm.md` updated to match the code (code is the reference)
     - README updated to match the code (release switch `AUTO_DESIGN_ENABLED`, layout of `sld_to_sap`, Home `plugin_order` caveat, hero banner fade, SLD to SAP behaviour)
+    - release notes: `src/release_notes.json` (hand-written, per version), `core/release_notes.py` (what the user has not seen yet, `user_state.json`), `ui/sheet_dialog.py` (shared base of the small windows), `ui/release_notes_dialog.py` ("What's new" with Got it), `MainWindow.show_release_notes_if_needed()` called from `__main__.main()` 300 ms after the window is shown
+    - update question: `ui/update_dialogs.py` (`UpdatePromptDialog`: Update now / Later, or Update now / Exit when mandatory, switches to "Updating…"), `__main__.ask_update()` and `_create_app()`, `bootstrap/launcher.py` 1.1.0 (asks before updating, stdout protocol `UPDATE`/`LATER`/`EXIT`, Windows message-box fallback, `--update-only` / `--yes` skip the question), `tools/build.py` (`--mandatory`, `release_notes` in `latest.json`, warning for a missing notes entry), `tools/release_config.json` (`min_bootstrap_version` 1.1.0), `docs/contract.md` updated (new frozen part: `ask_update`, `latest.json` fields, the question protocol); needs a new Setup
+    - update window polish: both version boxes have the same width, installed = warm and new = cyan, a drawn gradient arrow between them (`FlowArrow`), bold larger question, no release notes in the update window (shown once after the update); What's new: one framed card per version titled with version and date, NEW green / IMPROVED blue / FIXED warm tags
+    - tests: `tests/core/test_release_notes.py`, `tests/bootstrap/test_launcher.py`
 * [1.1.5] - (2026-10-24):
     - version no. is mentioning to SLD2SAP.m last ver. as v1.4
     - SLD to SAP plugin: `SldToSapPlugin` replaces the placeholder in `plugins/registry.py`; services `issues.py`, `geometry.py`, `sld_reader.py`, `connectivity.py`, `matcher.py`, `load_rules.py`, `pipeline.py`, `exporter.py` and `params.py` written from `docs/sld_to_sap_algorithm.md`

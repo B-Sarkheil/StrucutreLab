@@ -20,6 +20,8 @@ from .theme import LOGO_ICO
 from .widgets import FadeStackedWidget
 from .about_page import AboutPage
 from .navigation import ABOUT_PAGE, HOME_PAGE, Navigation
+from ..core import release_notes
+from .release_notes_dialog import ReleaseNotesDialog
 
  
 logger = logging.getLogger(__name__)
@@ -298,3 +300,17 @@ class MainWindow(QMainWindow):
         self.pages.fade_to(page)
         self._current_key = key
         self.navigation.set_current(key)
+
+
+    def show_release_notes_if_needed(self) -> None:
+        """After an update: show what is new once, then remember it."""
+
+        try:
+            notes = release_notes.pending_notes(self._version)
+
+            if notes:
+                ReleaseNotesDialog(notes, self._version, parent=self).exec()
+        except Exception:
+            logger.exception("Could not show the release notes")
+        finally:
+            release_notes.mark_seen(self._version)
