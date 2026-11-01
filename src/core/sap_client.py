@@ -153,3 +153,32 @@ class SapClient:
             raise SapError("PropFrame.GetNameList failed.")
 
         return [str(name) for name in list(names or [])[: int(count)]]
+
+    def read_table(self, table_key: str) -> list[dict[str, str]]:
+        """Rows of a SAP2000 database table as displayed: one dict per row,
+        field key -> text. Table definitions need no analysis."""
+
+        # pythonnet returns (ret, FieldKeyList, TableVersion,
+        # FieldsKeysIncluded, NumberRecords, TableData) for the ref parameters.
+        result = self.model.DatabaseTables.GetTableForDisplayArray(
+            table_key, None, "All", 0, None, 0, None
+        )
+
+        if not isinstance(result, tuple) or len(result) != 6:
+            raise SapError(
+                f"Unexpected result of GetTableForDisplayArray: {result!r}"
+            )
+
+        ret, _keys, _version, fields, count, data = result
+
+        if ret != 0:
+            raise SapError(f"SAP2000 could not give the table '{table_key}'.")
+
+        fields = [str(f) for f in list(fields or [])]
+        data = [str(v) for v in list(data or [])]
+        width = len(fields)
+
+        return [
+            dict(zip(fields, data[i * width : (i + 1) * width]))
+            for i in range(int(count))
+        ]

@@ -3,7 +3,13 @@
 Connects to SAP2000, opens the reference file chosen in step 1, reads
 the frame sections defined in it and shows them in a table. Every cell
 of the four "Is Allowed for ..." columns is a Yes / No toggle
-(default No). Next emits the table as a list of `SectionPermission`.
+(default No; Yes has a green tick, No a red cross). Next emits the table
+as a list of `SectionPermission`.
+
+Columns: the Section column gets all the free width (it is the most
+important one); the four role columns are only as wide as their two-line
+titles. Every column can be resized by dragging the header; after the
+user has resized one, the automatic widths are no longer applied.
 
 Editing helpers for long section lists:
 
@@ -24,10 +30,19 @@ import logging
 import re
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, QThread, Signal
-from PySide6.QtGui import QBrush, QColor, QKeySequence, QShortcut
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, QThread, Signal
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetrics,
+    QKeySequence,
+    QPainter,
+    QPen,
+    QShortcut,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -37,6 +52,9 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QProgressBar,
     QPushButton,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -76,6 +94,20 @@ ROLES = (
     ("Vertical Brace", 4, "allowedForVerticalBrace"),
 )
 
+# Titles shown in the table header: the long "Is Allowed for ..." names
+# (HEADERS, still used for Excel) are split into two lines so the role
+# columns stay narrow and the Section column gets the space.
+HEADER_LABELS = [
+    "Section",
+    *(title.replace("Is Allowed for ", "Is Allowed for\n") for title in HEADERS[1:]),
+]
+
+YES_COLOR = "#3DDC97"  # green tick
+NO_COLOR = DANGER  # red cross
+
+MIN_SECTION_WIDTH = 220
+ROLE_COLUMN_PADDING = 34
+
 PAGE_STYLE = f"""
     QFrame#tableCard {{
         background: {INK_RAISED};
@@ -100,7 +132,8 @@ PAGE_STYLE = f"""
         color: {STEEL};
         border: none;
         border-bottom: 1px solid {RULE_HI};
-        padding: 9px 12px;
+        border-right: 1px solid {RULE};
+        padding: 6px 10px;
         font-weight: 600;
     }}
     QLabel#statusText {{
@@ -196,9 +229,11 @@ class _SectionsLoader(QThread):
 
 
 class _ToggleTable(QTableWidget):
-    """Table that asks for a toggle when Space / Enter is pressed."""
+    """Table that asks for a toggle when Space / Enter is pressed and
+    reports when its visible area changes size."""
 
     toggle_requested = Signal(int, int)
+    viewport_resized = Signal()
 
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
@@ -210,6 +245,83 @@ class _ToggleTable(QTableWidget):
                 return
 
         super().keyPressEvent(event)
+
+    def viewportEvent(self, event):
+        result = super().viewportEvent(event)
+
+        if event.type() == QEvent.Type.Resize:
+            self.viewport_resized.emit()
+
+        return result
+
+
+class _PermissionDelegate(QStyledItemDelegate):
+    """Paints the Yes / No cells: a green tick with "Yes", a red cross with "No".
+
+    The cell background, hover and bottom line still come from the style
+    sheet; only the content is drawn here.
+    """
+
+    ICON = 12.0
+    GAP = 8.0
+
+    def paint(self, painter, option, index):
+        if index.column() == 0:
+            super().paint(painter, option, index)
+            return
+
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        opt.text = ""
+
+        widget = opt.widget
+        style = widget.style() if widget is not None else QApplication.style()
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget)
+
+        allowed = bool(index.data(Qt.ItemDataRole.UserRole))
+        label = "Yes" if allowed else "No"
+
+        font = QFont(opt.font)
+        font.setBold(allowed)
+        text_width = QFontMetrics(font).horizontalAdvance(label)
+
+        rect = QRectF(opt.rect)
+        total = self.ICON + self.GAP + text_width
+        x = rect.center().x() - total / 2
+        cy = rect.center().y()
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        if allowed:
+            pen = QPen(QColor(YES_COLOR), 2.4)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            painter.drawPolyline(
+                [
+                    QPointF(x + 0.5, cy + 0.5),
+                    QPointF(x + self.ICON * 0.38, cy + self.ICON * 0.34),
+                    QPointF(x + self.ICON, cy - self.ICON * 0.36),
+                ]
+            )
+        else:
+            pen = QPen(QColor(NO_COLOR), 2.2)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            half = self.ICON / 2 - 1.5
+            mx = x + self.ICON / 2
+            painter.drawLine(QPointF(mx - half, cy - half), QPointF(mx + half, cy + half))
+            painter.drawLine(QPointF(mx - half, cy + half), QPointF(mx + half, cy - half))
+
+        painter.setFont(font)
+        painter.setPen(QColor(PAPER if allowed else STEEL_DIM))
+        painter.drawText(
+            QRectF(x + self.ICON + self.GAP, rect.top(), text_width + 4, rect.height()),
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+            label,
+        )
+        painter.restore()
 
 
 # One undoable step: [(row, column, old value, new value), ...]
@@ -232,6 +344,8 @@ class SectionsPage(QWidget):
         self._loading = False
         self._undo: list[_Step] = []
         self._redo: list[_Step] = []
+        self._auto_sizing = False  # True while the code itself resizes columns
+        self._user_sized = False  # True once the user dragged a column border
 
         self.setObjectName("page")
         self.setStyleSheet(PAGE_STYLE)
@@ -334,27 +448,40 @@ class SectionsPage(QWidget):
 
         self.table = _ToggleTable(0, len(HEADERS))
         self.table.setObjectName("sectionsTable")
-        self.table.setHorizontalHeaderLabels(list(HEADERS))
+        self.table.setHorizontalHeaderLabels(HEADER_LABELS)
+        self.table.setItemDelegate(_PermissionDelegate(self.table))
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(36)
         self.table.setShowGrid(False)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.table.setHorizontalScrollMode(
+            QAbstractItemView.ScrollMode.ScrollPerPixel
         )
 
-        header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-
-        # Role columns are as wide as their (long) titles; the name takes the rest.
         for column in range(1, len(HEADERS)):
-            header.setSectionResizeMode(
-                column, QHeaderView.ResizeMode.ResizeToContents
+            self.table.horizontalHeaderItem(column).setTextAlignment(
+                Qt.AlignmentFlag.AlignCenter
             )
 
-        header.setHighlightSections(False)
+        self.table.horizontalHeaderItem(0).setTextAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
 
+        # Every column can be dragged by the user; the starting widths are
+        # set by _auto_layout_columns (Section = all the free width).
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setStretchLastSection(False)
+        header.setMinimumSectionSize(70)
+        header.setFixedHeight(58)
+        header.setHighlightSections(False)
+        header.sectionResized.connect(self._on_section_resized)
+
+        self.table.viewport_resized.connect(self._auto_layout_columns)
         self.table.cellClicked.connect(self._toggle)
         self.table.toggle_requested.connect(self._toggle)
 
@@ -450,6 +577,53 @@ class SectionsPage(QWidget):
         return button
 
     # -----------------------------------------------------------------
+    # Column widths
+    # -----------------------------------------------------------------
+
+    def _on_section_resized(self, *_args) -> None:
+        """A drag of a column border by the user switches the automatic
+        widths off (the left mouse button is down only during a drag)."""
+
+        if self._auto_sizing:
+            return
+
+        if QApplication.mouseButtons() & Qt.MouseButton.LeftButton:
+            self._user_sized = True
+
+    def _auto_layout_columns(self) -> None:
+        """Role columns as wide as their titles; Section takes the rest."""
+
+        if self._user_sized or self._auto_sizing:
+            return
+
+        available = self.table.viewport().width()
+
+        if available <= 0:
+            return
+
+        header = self.table.horizontalHeader()
+        font = QFont(header.font())
+        font.setBold(True)
+        metrics = QFontMetrics(font)
+
+        role_widths = [
+            max(metrics.horizontalAdvance(line) for line in label.split("\n"))
+            + ROLE_COLUMN_PADDING
+            for label in HEADER_LABELS[1:]
+        ]
+        section_width = max(available - sum(role_widths), MIN_SECTION_WIDTH)
+
+        self._auto_sizing = True
+
+        try:
+            header.resizeSection(0, section_width)
+
+            for column, width in enumerate(role_widths, start=1):
+                header.resizeSection(column, width)
+        finally:
+            self._auto_sizing = False
+
+    # -----------------------------------------------------------------
     # Loading
     # -----------------------------------------------------------------
 
@@ -527,15 +701,15 @@ class SectionsPage(QWidget):
         self._update_summary()
         self._sync_controls()
 
+        # A fresh list starts with the automatic widths again.
+        self._user_sized = False
+        self._auto_layout_columns()
+
     @staticmethod
     def _set_allowed(item: QTableWidgetItem, allowed: bool) -> None:
+        # The look (tick / cross, colors) is painted by _PermissionDelegate.
         item.setData(Qt.ItemDataRole.UserRole, allowed)
         item.setText("Yes" if allowed else "No")
-        item.setForeground(QBrush(QColor(CYAN if allowed else STEEL_DIM)))
-
-        font = item.font()
-        font.setBold(allowed)
-        item.setFont(font)
 
     def _allowed(self, row: int, column: int) -> bool:
         return bool(self.table.item(row, column).data(Qt.ItemDataRole.UserRole))

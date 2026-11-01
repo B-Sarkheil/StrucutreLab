@@ -3,18 +3,65 @@ from __future__ import annotations
 
 import logging
 
-from PySide6.QtWidgets import QStackedWidget, QWidget
+from PySide6.QtWidgets import QMessageBox, QStackedWidget, QWidget
+from PySide6.QtCore import QThread, Signal
 
 from src.plugins.auto_design.params import AutoDesignParams, SectionPermission
 from src.plugins.auto_design.ui.ga_settings_page import GASettingsPage
 from src.plugins.auto_design.ui.page import AutoDesignPage
+from src.plugins.auto_design.ui.run_page import (
+    CANCELLED,
+    FAILED,
+    FINISHED,
+    RunPage,
+)
 from src.plugins.auto_design.ui.sections_page import SectionsPage
+from src.plugins.auto_design.services.ga_run import GAContext, run_ga
+from src.plugins.auto_design.services.run_monitor import RunCancelled
+from src.plugins.auto_design.services.database_folder import (
+    check_folder_usable,
+    describe_folder,
+)
 
 logger = logging.getLogger(__name__)
 
+class _RunWorker(QThread):
+    """Runs the GA steps off the UI thread and forwards what the run
+    reports (status lines, progress, generation numbers) as signals."""
+
+    status = Signal(str)
+    progress = Signal(float)
+    generation = Signal(object)  # GenerationStats
+    succeeded = Signal(object)  # GAContext
+    failed = Signal(str)
+    cancelled = Signal()
+
+    def __init__(self, context: GAContext, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._context = context
+
+        monitor = context.monitor
+        monitor.on_status = self.status.emit
+        monitor.on_progress = self.progress.emit
+        monitor.on_generation = self.generation.emit
+
+    def run(self) -> None:
+        try:
+            run_ga(self._context)
+        except RunCancelled:
+            logger.info("The GA run was cancelled by the user")
+            self.cancelled.emit()
+            return
+        except Exception as exc:
+            logger.exception("The GA run failed")
+            self.failed.emit(str(exc) or exc.__class__.__name__)
+            return
+
+        self.succeeded.emit(self._context)
 
 class AutoDesignWizard(QStackedWidget):
-    """Step 1: SAP2000 file  ->  Step 2: allowed sections  ->  Step 3: GA settings."""
+    """Step 1: SAP2000 file  ->  Step 2: allowed sections  ->  Step 3: GA settings
+    ->  run page (live progress; Cancel, then Back to the settings)."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -27,8 +74,13 @@ class AutoDesignWizard(QStackedWidget):
         self.params: AutoDesignParams | None = None
         self.sap = None  # SapClient, set once step 2 has loaded the model
 
+        self.context: GAContext | None = None  # result of the last finished run
+        self._run_context: GAContext | None = None  # the run in progress
+        self._run_worker: _RunWorker | None = None
+
         self._sections_page: SectionsPage | None = None
         self._ga_page: GASettingsPage | None = None
+        self._run_page: RunPage | None = None
 
         self.file_page = AutoDesignPage()
         self.file_page.next_requested.connect(self._show_sections)
@@ -88,12 +140,16 @@ class AutoDesignWizard(QStackedWidget):
     def _show_ga_settings(self) -> None:
         # Created once, so the values typed by the user survive Back / Next.
         if self._ga_page is None:
-            page = GASettingsPage()
+            page = GASettingsPage(self.sap_path or "")
             page.back_requested.connect(self._back_to_sections)
-            page.next_requested.connect(self._on_params_accepted)
+            page.run_requested.connect(self._on_params_accepted)
 
             self._ga_page = page
             self.addWidget(page)
+
+        # A different SAP2000 file changes the default database folder
+        # (unless the user has already chosen one).
+        self._ga_page.set_sap_path(self.sap_path or "")
 
         self.setCurrentWidget(self._ga_page)
 
@@ -102,7 +158,7 @@ class AutoDesignWizard(QStackedWidget):
             self.setCurrentWidget(self._sections_page)
 
     # -----------------------------------------------------------------
-    # Step 3 -> next
+    # Step 3 -> run
     # -----------------------------------------------------------------
 
     def _on_params_accepted(self, params: AutoDesignParams) -> None:
@@ -110,13 +166,136 @@ class AutoDesignWizard(QStackedWidget):
 
         logger.info(
             "GA settings accepted: pop=%d, tournament=%d, generations=%d, "
-            "mutation=%.2f%%, penalty=%.3g, tolerance=%.3g cm",
+            "mutation=%.2f%%, penalty=%.3g, tolerance=%.3g cm, "
+            "update seismic loads=%s, models folder=%s",
             params.popSize,
             params.tournamentSize,
             params.genSize,
             params.mutationPercent,
             params.penalizeLevel,
             params.tolerance,
+            params.updateSeismicLoads,
+            params.modelsFolder,
         )
 
-        # TODO: open the next page of the wizard.
+        if not self._confirm_database_folder(params):
+            return
+
+        self._start_run()
+
+    def _confirm_database_folder(self, params: AutoDesignParams) -> bool:
+        """Warn that the database folder is cleared at the start of the run."""
+
+        problem = check_folder_usable(params.modelsFolder, self.sap_path or "")
+
+        if problem:
+            QMessageBox.warning(self, "Database folder", problem)
+            return False
+
+        state = describe_folder(params.modelsFolder)
+
+        if state.itemCount == 0:
+            return True
+
+        text = (
+            f"The database folder is not empty:\n\n{params.modelsFolder}\n\n"
+            f"It contains {state.itemCount} item(s)"
+        )
+
+        if state.generationFolders:
+            text += (
+                f", including {state.generationFolders} Generation folder(s) "
+                "of a previous run"
+            )
+
+        text += (
+            ".\n\nEverything inside it will be permanently deleted when the run "
+            "starts. Continue?"
+        )
+
+        answer = QMessageBox.warning(
+            self,
+            "Database folder",
+            text,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+
+        return answer == QMessageBox.StandardButton.Yes
+
+    def _ensure_run_page(self) -> RunPage:
+        # Created once and reset for every run.
+        if self._run_page is None:
+            page = RunPage()
+            page.cancel_requested.connect(self._on_cancel_requested)
+            page.back_requested.connect(self._back_to_ga_settings)
+
+            self._run_page = page
+            self.addWidget(page)
+
+        return self._run_page
+
+    def _start_run(self) -> None:
+        if self._run_worker is not None:
+            return
+
+        if self.sap is None or self.sections is None or self.params is None or not self.sap_path:
+            logger.error("Cannot start the run: input data is missing")
+            return
+
+        context = GAContext(
+            sap=self.sap,
+            params=self.params,
+            sections=list(self.sections),
+            sapPath=self.sap_path,
+        )
+        worker = _RunWorker(context, self)
+
+        page = self._ensure_run_page()
+        page.start(self.params.genSize)
+
+        worker.status.connect(page.add_status)
+        worker.progress.connect(page.set_progress)
+        worker.generation.connect(page.add_generation)
+        worker.succeeded.connect(self._on_run_succeeded)
+        worker.failed.connect(self._on_run_failed)
+        worker.cancelled.connect(self._on_run_cancelled)
+        worker.finished.connect(worker.deleteLater)
+
+        self._run_context = context
+        self._run_worker = worker
+
+        self.setCurrentWidget(page)
+        worker.start()
+
+    def _on_cancel_requested(self) -> None:
+        if self._run_context is not None:
+            self._run_context.monitor.cancel()
+
+    def _back_to_ga_settings(self) -> None:
+        # The run page only allows Back once the run has stopped.
+        if self._run_worker is None and self._ga_page is not None:
+            self.setCurrentWidget(self._ga_page)
+
+    def _on_run_succeeded(self, context: GAContext) -> None:
+        self._run_worker = None
+        self._run_context = None
+        self.context = context
+        self.sections = context.sections  # now with materialType filled
+
+        if self._run_page is not None:
+            self._run_page.set_state(FINISHED)
+
+    def _on_run_failed(self, error: str) -> None:
+        self._run_worker = None
+        self._run_context = None
+
+        if self._run_page is not None:
+            self._run_page.set_state(FAILED, error)
+
+    def _on_run_cancelled(self) -> None:
+        self._run_worker = None
+        self._run_context = None
+
+        if self._run_page is not None:
+            self._run_page.set_state(CANCELLED)

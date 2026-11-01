@@ -2,7 +2,7 @@ cd "D:\Python Library\StructureLab"
 
 
 git add .
-git commit -m "Release note system while updating"
+git commit -m "Update README.md"
 git push origin main
 
 

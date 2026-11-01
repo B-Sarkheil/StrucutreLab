@@ -1,14 +1,25 @@
-"""Auto Design - step 3: genetic-algorithm settings.
+"""Auto Design - last step: genetic-algorithm settings and run.
 
-Collects the GA parameters (they used to be on the first page). Values
-are validated when the user presses Next; on success the page emits
-`next_requested` with an `AutoDesignParams`. Back returns to step 2.
+Collects the GA parameters, the "update seismic loads" option and the
+database folder where the models of every generation are saved. Values
+are validated when the user presses "Simulate Evolution"; on success the
+page emits `run_requested` with an `AutoDesignParams`. Back returns to
+the sections table.
+
+The database folder defaults to a folder named "SAP Models" next to the
+SAP2000 reference file chosen in step 1 (see `set_sap_path`). The folder
+is only checked here, not created.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
+    QFileDialog,
     QFrame,
+    QGraphicsDropShadowEffect,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -19,22 +30,65 @@ from PySide6.QtWidgets import (
 )
 
 from src.plugins.auto_design.params import AutoDesignParams
-from src.plugins.auto_design.ui.fields import FORM_STYLE, Field, parse_float, parse_int
-from src.ui.theme import PAPER
+from src.plugins.auto_design.ui.fields import (
+    FORM_STYLE,
+    Field,
+    FancyCheckBox,
+    parse_float,
+    parse_int,
+)
+from src.plugins.auto_design.ui.icons import evolution_run_icon
+from src.plugins.sld_to_sap.ui.icons import folder_icon
+from src.ui.theme import AMBER, BLUE, CYAN, FONT_TITLE, ICONS_DIR, PAPER
 from src.ui.widgets import arrow_icon
+
+DEFAULT_FOLDER_NAME = "SAP Models"
+
+# src/ui/assets/icons/Run-Genetic.png (icon of the Simulate Evolution button)
+RUN_ICON_PNG = ICONS_DIR / "Run-Genetic.png"
+
+RUN_STYLE = f"""
+    QPushButton#runButton {{
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+            stop:0 {BLUE}, stop:1 #2A9BD8);
+        color: #FFFFFF;
+        border: 2px solid {CYAN};
+        border-radius: 14px;
+        font-family: "{FONT_TITLE}";
+        font-size: 14pt;
+        font-weight: 700;
+        padding: 10px 34px;
+    }}
+    QPushButton#runButton:hover {{
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+            stop:0 #2A7DC8, stop:1 #46B6EE);
+        border-color: {AMBER};
+    }}
+    QPushButton#runButton:pressed {{
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+            stop:0 #185C99, stop:1 #2A9BD8);
+        border-color: {AMBER};
+    }}
+    QPushButton#runButton:focus {{
+        border-color: {AMBER};
+    }}
+"""
 
 
 class GASettingsPage(QWidget):
     """Parameter form of the genetic algorithm."""
 
     back_requested = Signal()
-    next_requested = Signal(object)  # AutoDesignParams
+    run_requested = Signal(object)  # AutoDesignParams
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, sap_path: str = "", parent: QWidget | None = None):
         super().__init__(parent)
 
         self.setObjectName("page")
-        self.setStyleSheet(FORM_STYLE)
+        self.setStyleSheet(FORM_STYLE + RUN_STYLE)
+
+        self._sap_path = sap_path
+        self._folder_edited = False  # True once the user chose / typed a folder
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -74,11 +128,11 @@ class GASettingsPage(QWidget):
 
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(24, 20, 24, 22)
-        card_layout.setSpacing(16)
+        card_layout.setSpacing(0)  # gaps are set explicitly below
 
         grid = QGridLayout()
         grid.setHorizontalSpacing(24)
-        grid.setVerticalSpacing(14)
+        grid.setVerticalSpacing(2)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
 
@@ -107,12 +161,41 @@ class GASettingsPage(QWidget):
         grid.addWidget(self.tolerance, 2, 1)
 
         card_layout.addLayout(grid)
+        card_layout.addSpacing(8)
+
+        # Option: update seismic loads (unchecked by default)
+        self.updateSeismicLoads = FancyCheckBox("Update Seismic Loads for Each Offspring")
+        self.updateSeismicLoads.setChecked(False)
+        card_layout.addWidget(self.updateSeismicLoads, 0, Qt.AlignmentFlag.AlignLeft)
+
+        # more air between the option and the folder field below it
+        card_layout.addSpacing(24)
+
+        # Database folder of the generation models
+        self.modelsFolder = Field(
+            "Database Folder for the Generation Models",
+            "Folder where the models of every generation are saved",
+        )
+        self.modelsFolder.edit.textEdited.connect(self._on_folder_typed)
+
+        self.browse_button = QPushButton("Browse…")
+        self.browse_button.setIcon(folder_icon())  # same folder icon as SLD to SAP
+        self.browse_button.setIconSize(QSize(20, 20))
+        self.browse_button.setToolTip("Choose the database folder")
+        self.browse_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.browse_button.setMinimumHeight(self.modelsFolder.edit.sizeHint().height())
+        self.browse_button.clicked.connect(self._browse_folder)
+        self.modelsFolder.add_side_widget(self.browse_button)
+
+        card_layout.addWidget(self.modelsFolder)
 
         layout.addWidget(card)
-        layout.addSpacing(18)
+        layout.addSpacing(28)
+
+        self.set_sap_path(sap_path)
 
         # -------------------------------------------------------------
-        # Footer
+        # Footer: Back on the left, the run button in the middle
         # -------------------------------------------------------------
 
         self.back_button = QPushButton("Back")
@@ -122,22 +205,35 @@ class GASettingsPage(QWidget):
         self.back_button.setMinimumSize(110, 42)
         self.back_button.clicked.connect(self.back_requested.emit)
 
-        self.next_button = QPushButton("Next")
-        self.next_button.setIcon(arrow_icon("right"))
-        self.next_button.setIconSize(QSize(32, 24))
-        # Right-to-left layout puts the icon after the text.
-        self.next_button.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        self.next_button.setObjectName("primaryButton")
-        self.next_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.next_button.setMinimumSize(150, 42)
-        self.next_button.setDefault(True)
-        self.next_button.clicked.connect(self._on_next)
+        self.run_button = QPushButton("  Simulate Evolution")
+        self.run_button.setObjectName("runButton")
+        run_icon = QPixmap(str(RUN_ICON_PNG))
+
+        if run_icon.isNull():
+            # icon file missing: use the icon drawn in code
+            self.run_button.setIcon(evolution_run_icon(30))
+            self.run_button.setIconSize(QSize(42, 30))
+        else:
+            self.run_button.setIcon(QIcon(run_icon))
+            self.run_button.setIconSize(QSize(40, 40))
+        self.run_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.run_button.setMinimumSize(330, 62)
+        self.run_button.setDefault(True)
+        self.run_button.clicked.connect(self._on_run)
+
+        glow = QGraphicsDropShadowEffect(self.run_button)
+        glow.setBlurRadius(30)
+        glow.setOffset(0, 0)
+        glow.setColor(QColor(CYAN).darker(120))
+        self.run_button.setGraphicsEffect(glow)
 
         footer = QHBoxLayout()
         footer.setSpacing(10)
-        footer.addWidget(self.back_button)
-        footer.addStretch()
-        footer.addWidget(self.next_button)
+        footer.addWidget(self.back_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        footer.addStretch(1)
+        footer.addWidget(self.run_button)
+        footer.addStretch(1)
+        footer.addSpacing(self.back_button.minimumWidth())  # keeps the run button centered
 
         layout.addLayout(footer)
         layout.addStretch()
@@ -149,20 +245,89 @@ class GASettingsPage(QWidget):
             self.mutationPercent,
             self.penalizeLevel,
             self.tolerance,
+            self.modelsFolder,
         ):
-            field.edit.returnPressed.connect(self._on_next)
+            field.edit.returnPressed.connect(self._on_run)
+
+    # -----------------------------------------------------------------
+    # Database folder
+    # -----------------------------------------------------------------
+
+    def set_sap_path(self, sap_path: str) -> None:
+        """Remember the SAP2000 file chosen in step 1; unless the user has
+        chosen a folder, the default becomes `<folder of the file>/SAP Models`."""
+
+        self._sap_path = sap_path
+
+        if not self._folder_edited:
+            self.modelsFolder.edit.setText(self._default_folder())
+
+    def _default_folder(self) -> str:
+        if not self._sap_path:
+            return ""
+
+        return str(Path(self._sap_path).parent / DEFAULT_FOLDER_NAME)
+
+    def _on_folder_typed(self, _text: str) -> None:
+        self._folder_edited = True
+
+    def _browse_folder(self) -> None:
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Select the database folder for the generation models",
+            self._browse_start(),
+        )
+
+        if folder:
+            self._folder_edited = True
+            self.modelsFolder.edit.setText(str(Path(folder)))
+
+    def _browse_start(self) -> str:
+        """Nearest existing folder of the current text (the default
+        "SAP Models" folder may not exist yet)."""
+
+        text = self.modelsFolder.text()
+        candidates = [Path(text)] if text else []
+
+        if self._sap_path:
+            candidates.append(Path(self._sap_path).parent)
+
+        for candidate in candidates:
+            for path in (candidate, *candidate.parents):
+                if path.is_dir():
+                    return str(path)
+
+        return str(Path.home())
 
     # -----------------------------------------------------------------
     # Actions
     # -----------------------------------------------------------------
 
-    def _on_next(self) -> None:
+    def _check_folder(self) -> str | None:
+        """The folder text if usable, else None (with an inline error)."""
+
+        text = self.modelsFolder.text()
+
+        if not text:
+            self.modelsFolder.set_error("Choose the database folder.")
+            return None
+
+        path = Path(text)
+
+        if path.exists() and not path.is_dir():
+            self.modelsFolder.set_error("This path is a file, not a folder.")
+            return None
+
+        return str(path)
+
+    def _on_run(self) -> None:
         pop_size = parse_int(self.popSize)
         tournament_size = parse_int(self.tournamentSize)
         gen_size = parse_int(self.genSize)
         mutation_percent = parse_float(self.mutationPercent, maximum=100.0)
         penalize_level = parse_float(self.penalizeLevel)
         tolerance = parse_float(self.tolerance)
+        models_folder = self._check_folder()
 
         if None in (
             pop_size,
@@ -171,6 +336,7 @@ class GASettingsPage(QWidget):
             mutation_percent,
             penalize_level,
             tolerance,
+            models_folder,
         ):
             return
 
@@ -178,7 +344,7 @@ class GASettingsPage(QWidget):
             self.tournamentSize.set_error("Must not exceed the population size.")
             return
 
-        self.next_requested.emit(
+        self.run_requested.emit(
             AutoDesignParams(
                 popSize=pop_size,
                 tournamentSize=tournament_size,
@@ -186,5 +352,7 @@ class GASettingsPage(QWidget):
                 mutationPercent=mutation_percent,
                 penalizeLevel=penalize_level,
                 tolerance=tolerance,
+                updateSeismicLoads=self.updateSeismicLoads.isChecked(),
+                modelsFolder=models_folder,
             )
         )
