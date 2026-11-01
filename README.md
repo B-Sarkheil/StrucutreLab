@@ -2,16 +2,26 @@
 
 Integrated engineering desktop software for Windows (Python + PySide6) for about 30 users. It gradually replaces scattered MATLAB and Excel-VBA tools. Each tool is a plugin.
 
-First real tool: **Auto Design**, automatic structural section optimization (Genetic Algorithm + SAP2000 OAPI). Development resumed on 2026-10-27: it is **enabled** again (`AUTO_DESIGN_ENABLED = True` in `plugins/registry.py`) and its three wizard steps work against a real SAP2000 v23. Second tool: **SLD to SAP**, loading the SAP2000 model from piping SLD files exported from AutoCAD.
+First real tool: **Auto Design**, automatic structural section optimization (Genetic Algorithm + SAP2000 OAPI). Development resumed on 2026-10-27: it is **enabled** (`AUTO_DESIGN_ENABLED = True` in `plugins/registry.py`). Its wizard has three input pages and a live run page; the run executes GA steps 5 to 8 so far (see "Auto Design"). Second tool: **SLD to SAP**, loading the SAP2000 model from piping SLD files exported from AutoCAD.
 
 Design context lives in these docs in the project knowledge:
 
 * `claude/engineering-platform-decisions.md`: bootstrap / runtime / app layers, auto-update from the server, IT constraints.
 * `docs/contract.md`: the frozen contract between the launcher and the app (layout on the user machine, server share, update rules, the update question).
-* `claude/project-plan-structural-optimization.md`: Auto Design plan (Phase 1 GA, Phase 2 ML surrogate lab, Phase 3 general model).
+* `claude/project-plan-structural-optimization.md`: Auto Design plan (Phase 1 GA, Phase 2 ML surrogate lab, Phase 3 general model). Written in Persian. Key rules: the GA only calls `evaluate(x)`; save every evaluation from day one (training data for the ML phase); the final answer is always confirmed with the real engine; ML never becomes a dependency of the GA.
 * `docs/sld_to_sap_algorithm.md`: the SLD to SAP algorithm guide. The code is the reference; if they disagree, the guide must be fixed (or, after a decision, the code).
+* A complete document of the implemented Auto Design algorithm will be written at the end of the work (planned, `docs/` folder; not created yet). Until then the user describes the GA to Claude step by step, and this README only keeps what is needed to continue the work.
 
-The user's tested MATLAB program that drives SAP2000 (`connectToSAP.m`, `openSapModel.m`, `modelingOneLine.m`, `designOneLine.m`, `getDesignResultsType1.m`, `modifyProfilesType1.m`, `modifySapModelType1.m`) is also in the project knowledge. It is the reference for SAP2000 API calls; the user can extract the exact method signatures from the DLL in MATLAB on request. The MATLAB reference of SLD to SAP is `SLD2SAP.m` (v1.4) with `SLD2SAP.lsp`.
+### MATLAB references (project knowledge)
+
+The user's tested MATLAB code is the reference for SAP2000 API calls; method signatures in it can be trusted (the user can extract exact signatures from the DLL on request). It belongs to the **Auto CPS** tool (planned, not built in Python), not to Auto Design, but the API patterns apply:
+
+* `connectToSAP.m`, `openSapModel.m` (ported in `core/sap_client.py`).
+* `runAll.m`, `modelingOneLine.m`, `designOneLine.m`: open model, change sections, `File.Save(path)`, `Analyze.RunAnalysis()`, then read results.
+* `modifyProfilesType1.m`: `SetModelIsLocked(false)` then `FrameObj.SetSection(name, section)`.
+* `modifySapModelType1.m`: geometry/loads/mass source/seismic coefficients through the API (`EditPoint`, `PointObj`, `FrameObj.SetLoadDistributed`, `SourceMass`, `AutoSeismic`, `StaticLinear` load cases).
+* `getDesignResultsType1.m` (the function inside is named `getDesignResultsType2`): `DesignSteel.StartDesign()`, `DesignSteel.GetSummaryResults`, `Setup.SetComboSelectedForOutput`, `AnalysisResults.JointDispl`, `JointReact`. Useful when `fitness_calculator` is written.
+* `SLD2SAP.m` (v1.4) with `SLD2SAP.lsp`: reference of SLD to SAP.
 
 ## Layout
 
@@ -33,19 +43,29 @@ StructureLab/
 │   │   ├── release_notes_dialog.py  "What's new" window after an update (Got it button)
 │   │   └── update_dialogs.py        "Update available" window shown by the launcher (Update now / Later / Exit)
 │   └── plugins/        base.py, registry.py, placeholder.py, <plugin>/
-│       │ 
+│       │
 │       ├── auto_design/
 │       │   ├── plugin.py       registers the plugin; create_widget() returns AutoDesignWizard
-│       │   ├── params.py       AutoDesignParams (GA settings, step 3), SectionPermission (step 2: four roles)
-│       │   ├── services/
-│       │   │   ├── __init__.py
-│       │   │   └── sections_excel.py   Excel import / export of the sections table (no Qt)
+│       │   ├── params.py       AutoDesignParams (GA settings, step 3), SectionPermission (step 2 table + materialType from GA step 5)
+│       │   ├── services/       pure logic, no Qt
+│       │   │   ├── sections_excel.py     Excel import / export of the sections table
+│       │   │   ├── sap_tables.py         pick_field(): case-insensitive field of a SAP database-table row
+│       │   │   ├── run_monitor.py        RunMonitor (status / progress / generation reports, cooperative cancel), RunCancelled, GenerationStats
+│       │   │   ├── ga_run.py             GAContext, prepare_database_folder, step5..step8 functions, run_ga
+│       │   │   ├── section_materials.py  GA step 5: Material Type of every section
+│       │   │   ├── frame_assignments.py  GA step 6: section assigned to every frame
+│       │   │   ├── model_geometry.py     GA step 7: joint coordinates and frame connectivity
+│       │   │   ├── population.py         GA step 8: Individual, frame roles, allowed sections per frame, random genes
+│       │   │   ├── fitness.py            fitness_calculator (STUB, returns None)
+│       │   │   └── database_folder.py    check / describe / clear the database folder
 │       │   └── ui/
-│       │       ├── wizard.py             QStackedWidget that moves between the steps and keeps the collected data
+│       │       ├── wizard.py             QStackedWidget: moves between the pages, keeps the collected data, owns the run worker thread (_RunWorker)
 │       │       ├── page.py               step 1: SAP2000 reference file (drop zone)
 │       │       ├── sections_page.py      step 2: allowed-sections table
-│       │       ├── ga_settings_page.py   step 3: GA settings form
-│       │       └── fields.py             form widgets shared by the pages (Field, parse_int, parse_float, FORM_STYLE)
+│       │       ├── ga_settings_page.py   step 3: GA settings form + Simulate Evolution button
+│       │       ├── run_page.py           live view of the run (progress bar, tiles, chart, status log); no GA logic
+│       │       ├── fields.py             form widgets shared by the pages (Field, FancyCheckBox, parse_int, parse_float, FORM_STYLE)
+│       │       └── icons.py              vector icons drawn in code (evolution_run_icon)
 │       └── sld_to_sap/
 │           ├── plugin.py       SldToSapPlugin; create_widget() returns SldToSapPage (lazy import)
 │           ├── params.py       SldParams (z0, tolerance_mm, end_tolerance_mm, eqz_coef, friction_coef)
@@ -68,7 +88,7 @@ StructureLab/
 ├── dist/               generated by build.py (never edit): publish/ (files for the server), stage/ (installer input), StructureLab-Setup.exe
 ├── docs/
 ├── tests/
-│    ├── auto_design/
+│    ├── auto_design/   (empty so far)
 │    ├── bootstrap/
 │    │   └── test_launcher.py        update flow of the launcher with a fake server (no Qt, no Windows needed)
 │    ├── core/
@@ -83,6 +103,8 @@ StructureLab/
 
 ```
 
+Every package folder needs an `__init__.py` (the Auto Design `services/` and `ui/` folders have one).
+
 ## How the app works
 
 * `__main__.main()`: `setup_logging()` → QApplication → `apply_theme` → `register_builtin_plugins()` → `MainWindow` → 300 ms later `MainWindow.show_release_notes_if_needed()` → `app.exec()`.
@@ -91,7 +113,7 @@ StructureLab/
 * **Shell** (`ui/`): `MainWindow` reads the registry and passes the plugins to `Navigation` (sidebar) and `HomePage`. Clicking a sidebar item or a card calls `MainWindow.show_page(key)`. Home is built at startup; each plugin page is created lazily on first open and kept in a `FadeStackedWidget` (a `QStackedWidget` that fades the new page in). If `create_widget()` fails, the error is logged and the current page stays. The About page is a shell page (not a plugin) opened from the About card at the bottom of the sidebar.
 * **Home page caveat:** `home_page.py` has a fixed list `plugin_order = ["auto_design", "sld_to_sap", "pdms_to_sap", "auto_cps"]`; only plugins named there get a card or row. A new plugin must be added to that list until it is replaced by the registry order (see known issues).
 * **Not implemented yet (shown as planned, open the "Under development" page):** Auto CPS and PDMS to SAP.
-* **Visual language** ("structural drawing sheet"): all colors are tokens at the top of `ui/theme.py` (blueprint-ink surfaces, drafting-cyan linework, amber as the single signal color for active/hover/focus). Titles use Bahnschrift, body uses Segoe UI. Most widgets are styled by `objectName` in the stylesheet; cards, the hero banner and the sidebar marker are painted in code (`ui/widgets.py`, `ui/home_page.py`, `ui/navigation.py`) and read the same tokens. Available tools get large cards, planned tools get dashed rows. The hero banner fades its logo in once over 5 s (`HeroBanner.FADE_MS`), which is the only unprompted motion in the app; the About page logo emblem spins while visible. `ui/loading_overlay.py` is the shared loading overlay (delay 200 ms, minimum visible 450 ms, blocks input to the page below).
+* **Visual language** ("structural drawing sheet"): all colors are tokens at the top of `ui/theme.py` (blueprint-ink surfaces, drafting-cyan linework, amber as the single signal color for active/hover/focus, plus `BLUE`, `DANGER`, `PAPER`, `STEEL`, `STEEL_DIM`, `RULE`, `RULE_HI`, `INK*`). Titles use Bahnschrift, body uses Segoe UI. Most widgets are styled by `objectName` in the stylesheet; cards, the hero banner and the sidebar marker are painted in code (`ui/widgets.py`, `ui/home_page.py`, `ui/navigation.py`) and read the same tokens. Available tools get large cards, planned tools get dashed rows. The hero banner fades its logo in once over 5 s (`HeroBanner.FADE_MS`), which is the only unprompted motion in the app; the About page logo emblem spins while visible. `ui/loading_overlay.py` is the shared loading overlay (delay 200 ms, minimum visible 450 ms, blocks input to the page below). New pages of a plugin follow the same look (see `run_page.py` for a page that paints its own widgets with these tokens).
 * **Small modal windows** (`ui/sheet_dialog.py`): "What's new" and "Update available" are frameless dialogs drawn on the About page's `SheetCard` (same blueprint grid and corner marks). `SheetDialog` is the base (heading, divider, buttons, scrollable list of framed version cards that grows up to 300 px, drag by any free area, indeterminate `BusyBar` drawn in code); `ReleaseNotesDialog` and `UpdatePromptDialog` only fill it.
 
 ## Release notes
@@ -121,32 +143,92 @@ First release / new Setup: `.\runtime\python\python.exe tools\build.py --install
 
 ## Auto Design (current state; enabled, see the release switch)
 
-A wizard inside the plugin (`ui/wizard.py`, a `QStackedWidget`); the shell knows nothing about its steps. The three steps below were run by the user against a real SAP2000 v23 on 2026-10-27 and work, including the SAP2000 connection.
+A wizard inside the plugin (`ui/wizard.py`, a `QStackedWidget`); the shell knows nothing about its steps. Field names are camelCase on purpose (`popSize`, `frameSections`, `materialType` ...), the same name from the form down to the GA code.
 
-1. **Step 1 – SAP2000 reference file** (`ui/page.py`, `AutoDesignPage`). A big drop area (`DropZone`): drop a `.sdb` file or click to browse (file dialog). Only the extension `.sdb` is accepted (error line otherwise). The SAP2000 logo is read from `ui/assets/icons/sap.png` (`sap.ico` and `sao.ico` are accepted too); a plain "SAP" lettering is drawn when none exists. After a file is chosen the area shows file name, folder, size and a "Change file…" button. Next checks that the file still exists and emits the path (`str`). The path is NOT part of `AutoDesignParams`; the wizard keeps it as `sap_path`.
-2. **Step 2 – allowed sections** (`ui/sections_page.py`). In a worker thread: connect to SAP2000 (attach to a running instance, else start one) → open the file → read frame section names (`PropFrame.GetNameList`). Table columns: Section, Is Allowed for Column, Is Allowed for Beam, Is Allowed for Horizontal Brace, Is Allowed for Vertical Brace (`SectionPermission` fields `allowedForColumn`, `allowedForBeam`, `allowedForHorizontalBrace`, `allowedForVerticalBrace`; the role list `ROLES` in `sections_page.py` and `HEADERS` in `sections_excel.py` must keep the same order). Each cell toggles No/Yes on click or Space/Enter; default No. Loading shows a progress bar; failure shows the message and a Retry button. Next requires at least one Yes and emits `list[SectionPermission]`. A Back button returns to step 1. Tools for editing long section lists (all of them work on the table data, never on SAP):
-    * **Name filter** above the table. Plain text matches anywhere in the name; text with `*` / `?` must match the whole name (`IPE*` starts with IPE, `*300` ends with 300, `?` is one character); a comma or `;` separates several patterns (`HEA*, IPE*`). Case is ignored. The filter only hides rows.
-    * **Apply to the shown sections**: choose a role (Column / Beam / Horizontal Brace / Vertical Brace) and press `Set Yes (N)` or `Set No (N)`; only the N rows that pass the filter change.
-    * **Undo / Redo** (buttons, Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z). Every click, every bulk action and every Excel import is one step. The history is cleared when the sections are reloaded from SAP. While the filter box has focus, Ctrl+Z undoes its text instead.
-    * **Live counters** under the table: `Allowed: Column n | Beam n | Horizontal Brace n | Vertical Brace n` and `Showing x of y`. Counters, Export and Next always use all rows, shown or hidden. There is deliberately no warning when a role has zero sections, because a user may legitimately not use a role.
-    * **Excel export / import** (`Export…` / `Import…` buttons, logic in `services/sections_excel.py`, needs `openpyxl`, imported lazily). Export writes one sheet with the header `Section`, `Is Allowed for Column`, `Is Allowed for Beam`, `Is Allowed for Horizontal Brace`, `Is Allowed for Vertical Brace` and a Yes/No drop-down in the cells. Import matches rows by section name (all five header names must exist, so an old three-role file is rejected with a message naming the missing columns; Yes/No also accepts y/n/true/false/1/0/x, an empty cell means No). If any cell has another value, nothing is applied and the first bad cells are reported. Sections in the file but not in the model are ignored, sections in the model but not in the file stay unchanged, and both counts are shown. Import ignores the filter and is one undo step.
-3. **Step 3 – GA settings** (`ui/ga_settings_page.py`, `GASettingsPage`; this form used to be on the first page). Fields and the variable each is stored in (defaults in brackets): Population Size `popSize` (100), Tournament Size `tournamentSize` (4), Number of Generations `genSize` (10) (positive integers); Mutation Percent (%) `mutationPercent` (0; range 0–100); Penalize Level Coefficient `penalizeLevel` (1); Tolerance to Detect Member as Beam or Column (cm) `tolerance` (1) (positive decimals, a comma is accepted as the decimal separator). Validation runs on Next (or Enter in a field) with inline errors (`ui/fields.py`: `Field`, `parse_int`, `parse_float`); extra rule: `tournamentSize <= popSize`. Back returns to step 2. Next emits `AutoDesignParams`.
-4. **Wizard state** (`ui/wizard.py`): `sap_path` (step 1), `sections` (the list from step 2), `params` (`AutoDesignParams`, step 3) and `sap` (the live `SapClient`). Going Back and Next again with the **same** `sap_path` reuses the loaded step 2 page (no reconnect, choices kept, undo history kept); a **different** `sap_path` rebuilds step 2 from scratch and clears `sections` and `sap`. The step 3 page is created once, so the typed values survive Back / Next.
-5. **Next steps of the wizard:** not built yet (`_on_params_accepted` only stores `params` and logs; see its TODO).
+### The 20 steps of the algorithm and what exists
+
+The whole algorithm has **20 steps**, described to Claude by the user a few at a time (`TOTAL_STEPS = 20` in `ga_run.py`). Steps 1 to 4 are the wizard pages; the run starts at step 5 (`FIRST_RUN_STEP = 5`). Do not invent steps that the user has not described.
+
+| Step | What | Where |
+|---|---|---|
+| 1 | SAP2000 reference file | `ui/page.py` |
+| 2 | Allowed sections table | `ui/sections_page.py` |
+| 3 | GA settings | `ui/ga_settings_page.py` |
+| 4 | "Simulate Evolution" button (confirms the database folder, starts the run) | `ga_settings_page.py` + `wizard.py` |
+| 5 | Material Type of every section → `ctx.sections[i].materialType` | `services/section_materials.py`, `step5_material_types` |
+| 6 | Section assigned to every frame → `ctx.frameSections` (frame → section) | `services/frame_assignments.py`, `step6_frame_sections` |
+| 7 | Joint coordinates and frame connectivity → `ctx.jointCoordinates`, `ctx.frameConnectivity` | `services/model_geometry.py`, `step7_geometry` |
+| 8 | Initial population of `popSize` (made even) members, with fitness | `services/population.py`, `ga_run.step8_initial_population` |
+| 9 to 20 | not described / not built yet (`run_ga` has a TODO) | |
+
+### Wizard pages (steps 1 to 3)
+
+1. **Step 1 – SAP2000 reference file** (`ui/page.py`, `AutoDesignPage`). A big drop area (`DropZone`): drop a `.sdb` file or click to browse. Only `.sdb` is accepted. The SAP2000 logo is read from `ui/assets/icons/sap.png` (`sap.ico` and `sao.ico` are accepted too); a plain "SAP" lettering is drawn when none exists. Next checks that the file still exists and emits the path (`str`). The path is NOT part of `AutoDesignParams`; the wizard keeps it as `sap_path`.
+2. **Step 2 – allowed sections** (`ui/sections_page.py`). In a worker thread (`_SectionsLoader`): connect to SAP2000 (attach to a running instance, else start one) → open the file → read frame section names (`PropFrame.GetNameList`). Table columns: Section, Is Allowed for Column, Is Allowed for Beam, Is Allowed for Horizontal Brace, Is Allowed for Vertical Brace (`SectionPermission` fields `allowedForColumn`, `allowedForBeam`, `allowedForHorizontalBrace`, `allowedForVerticalBrace`; the role list `ROLES` in `sections_page.py`, `HEADERS` in `sections_excel.py` and `ROLE_FIELDS` in `population.py` must keep the same roles). Each cell toggles No/Yes on click or Space/Enter; default No. Loading shows a progress bar; failure shows the message and a Retry button. Next requires at least one Yes and emits `list[SectionPermission]`. Tools for long section lists (all work on the table data, never on SAP):
+    * **Name filter**: plain text matches anywhere in the name; text with `*` / `?` must match the whole name (`IPE*`, `*300`); a comma or `;` separates patterns. Case ignored. It only hides rows.
+    * **Apply to the shown sections**: choose a role and press `Set Yes (N)` / `Set No (N)`; only the N rows that pass the filter change.
+    * **Undo / Redo** (buttons, Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z). Every click, bulk action and Excel import is one step. History is cleared when the sections are reloaded.
+    * **Live counters** under the table (`Allowed: Column n | Beam n | ...`, `Showing x of y`). Counters, Export and Next always use all rows. No warning when a role has zero sections (a user may legitimately not use a role).
+    * **Excel export / import** (`services/sections_excel.py`, needs `openpyxl`, imported lazily). Import matches rows by section name; all five header names must exist; Yes/No also accepts y/n/true/false/1/0/x, empty = No; any other value applies nothing and reports the first bad cells; sections not in the model are ignored, sections not in the file stay unchanged. One undo step.
+3. **Step 3 – GA settings** (`ui/ga_settings_page.py`, `GASettingsPage`). Fields (defaults in brackets): `popSize` (100), `tournamentSize` (4), `genSize` (10), `mutationPercent` (0; range 0 to 100), `penalizeLevel` (1), `tolerance` (1, in **cm**: tolerance to detect a member as beam or column); the checkbox `updateSeismicLoads` (off) and `modelsFolder` (database folder for the generation models; default `<folder of the reference file>\SAP Models`, with a Browse button; once the user types or browses, a different reference file no longer changes it). Validation on **Simulate Evolution** (or Enter) with inline errors (`ui/fields.py`); extra rule `tournamentSize <= popSize`; the folder text must not be empty or a file. The run button uses `ui/assets/icons/Run-Genetic.png` (falls back to `evolution_run_icon`). The page is created once, so typed values survive Back / Next. It emits `run_requested(AutoDesignParams)`.
+
+`AutoDesignParams` (frozen): `popSize, tournamentSize, genSize, mutationPercent, penalizeLevel, tolerance, updateSeismicLoads, modelsFolder`. **Not used by the GA yet:** `tournamentSize`, `mutationPercent`, `penalizeLevel`, `genSize` (only for the run page chart range), `updateSeismicLoads`. `tolerance` is meant for `classify_frame`.
+
+### Wizard state and the run lifecycle (`ui/wizard.py`)
+
+* State: `sap_path`, `sections`, `params`, `sap` (the live `SapClient`, taken from the sections page), `context` (the last finished run), `_run_context`, `_run_worker`. Going Back and Next with the **same** `sap_path` reuses the loaded step 2 page; a **different** `sap_path` rebuilds it and clears `sections` and `sap`.
+* **Simulate Evolution** → `_on_params_accepted` → `_confirm_database_folder`: `check_folder_usable` (refuses a drive root, the user's home folder, a file, or a folder that contains the reference file) and, when the folder is not empty, a Yes/No warning (default No) that **everything inside will be permanently deleted** → `_start_run`.
+* `_start_run` creates `GAContext(sap, params, sections, sapPath)` and a `_RunWorker` (a `QThread`), connects its signals (`status`, `progress`, `generation`, `succeeded`, `failed`, `cancelled`) to the run page and shows `RunPage`.
+* The worker calls `run_ga(ctx)`. `RunCancelled` → `cancelled`; any other exception → `failed(message)`; else `succeeded(ctx)`: the wizard keeps `context` and `sections` (now with `materialType`).
+* **Cancel** is cooperative (`services/run_monitor.py`): `RunMonitor.cancel()` sets a flag; `monitor.status(...)` is a checkpoint that raises `RunCancelled`; a SAP2000 call already running cannot be interrupted. The run page confirms Cancel with a dialog and allows Back only after the run stopped.
+* **Progress** is a temporary estimate: finished steps out of the steps from `FIRST_RUN_STEP` to `TOTAL_STEPS` (16), reported by `run_ga` after each step; `prepare_database_folder` is not counted. With only steps 5 to 8 built the bar is at 25 % when they finish; the run page sets 100 % on `FINISHED`. The real way of computing it comes when the whole algorithm exists.
+* **Run page** (`ui/run_page.py`, pure display, no SAP and no GA logic): state chip (Running / Cancelling / Cancelled / Finished / Failed), elapsed time, animated progress bar, four tiles (generation, best weight, change in weight, mean DCR), the evolution chart (switch buttons follow the list `METRICS`; to add an objective add a `MetricSpec` and the value in `GenerationStats`), and the status log (one line per `monitor.status`, newest at the bottom). It is fed by `start`, `add_status`, `set_progress`, `add_generation`, `set_state`. **`monitor.generation(GenerationStats)` is never called yet** (the generation loop does not exist), so the tiles and chart stay empty. `GenerationStats`: `generation` (0 = initial population), `bestWeight`, `meanWeight`, `meanRatio`, `maxRatio`.
+
+### Run data (`GAContext`, `services/ga_run.py`)
+
+`sap`, `params`, `sections`, `sapPath` (reference file, the original is never modified), `frameSections`, `jointCoordinates` (m), `frameConnectivity` (frame → (jointI, jointJ)), `population: list[Individual]`, `rng` (`random.Random()`, **unseeded** for now; add a seed setting if repeatable runs are needed), `monitor`. `Individual` (`population.py`): `name` (e.g. `Gen-1-3`), `path` (its `.sdb`), `genes` (frame → section), `fitness` (whatever `fitness_calculator` returns; `None` for now).
+
+Read-only table access: `SapClient.read_table(key)` returns rows of a SAP database table as dicts (field → text); the table names used are in `section_materials.py` (`Frame Section Properties 01 - General`, `Material Properties 01 - General`), `frame_assignments.py` (`Frame Section Assignments`, field `AnalSect`) and `model_geometry.py` (`Joint Coordinates`, `Connectivity - Frame`). The model is read in N-m-C units (`open_model` sets them).
+
+### Run start: database folder (`prepare_database_folder`, `services/database_folder.py`)
+
+At the start of `run_ga` (before step 5) the run re-checks the folder, **opens the reference model first** (so SAP2000 does not hold the files of a previous run; the reference is outside the folder), then deletes everything inside `modelsFolder` (the folder itself stays). A file that cannot be deleted gives a clear error on the run page. Consequence: a cancelled or failed run leaves partial files until the next run.
+
+### Step 8: initial population (decided with the user)
+
+* Population size is always **even**: `N = popSize + popSize % 2` (members are paired later). The reference model is member 1; the loop `i = 1 .. N-1` builds the others.
+* Folder layout (one `Generation-<g>` per generation, N member folders inside, each with the SAP file of the same name):
+
+  ```text
+  <modelsFolder>\Generation-1\Gen-1-1\Gen-1-1.sdb     copy of the reference file
+  <modelsFolder>\Generation-1\Gen-1-2\Gen-1-2.sdb     ... up to Gen-1-N
+  <modelsFolder>\Generation-2\Gen-2-1\Gen-2-1.sdb     (later steps)
+  ```
+* **Gene = one frame** (not a section group). Genes are independent; the same section may appear in many genes. A random section for a frame is chosen from the sections that have **the same Material Type as the frame's reference section** and are **allowed for the frame's role** (column, beam, horizontalBrace, verticalBrace). The options are computed once before any folder is made (`build_gene_options`); a frame with no Material Type or no allowed section stops the run at the start with all problems listed together.
+* Member i: open the reference model, `unlock_model`, assign the new section only to frames whose section differs from the reference, `save_model_as` the member's path, then `fitness_calculator(sap, path)`. The reference model is reopened every time (clean start, no old results). The reference member itself is evaluated too, on its **copy** `Gen-1-1.sdb`.
+* **`classify_frame` is not written** (raises `NotImplementedError`): the user has not yet described the rule (beam / column / horizontal brace / vertical brace from the joint coordinates and the tolerance in cm). Until then the run stops in step 8 before any member folder is made.
+* **`fitness_calculator` (`services/fitness.py`) is a stub** returning `None`: input is a SAP file (the open model), output the optimization objectives; the user will describe it later (weight, DCR from steel design, drift, deflection; see the project plan; the MATLAB `getDesignResultsType1.m` shows the design-results calls).
 
 ### SAP2000 connection decisions (`core/sap_client.py`)
 
 * Uses `pythonnet` with the .NET Framework runtime (`pythonnet.load("netfx")`) and loads `SAP2000v1.dll` directly, like `NET.addAssembly` in the MATLAB code.
-* **Only SAP2000 v23 is supported** (company rule: everyone has it). The DLL is bundled in `src/core/vendor/sap2000_v23/SAP2000v1.dll`, so the install path and signature differences between versions do not matter. After connecting, the running SAP version is checked and anything other than v23 gives a clear error. SAP2000 itself must still be installed.
-* The DLL is small, so it ships inside the app update package; running it from `%LocalAppData%` is not a problem (confirmed by the user). `build.py` zips every file under `src/`, not only `.py`, so the DLL is included; `.gitignore` must not exclude it.
+* **Only SAP2000 v23 is supported** (company rule: everyone has it). The DLL is bundled in `src/core/vendor/sap2000_v23/SAP2000v1.dll`. After connecting, the running SAP version is checked and anything other than v23 gives a clear error. SAP2000 itself must still be installed.
+* The DLL ships inside the app update package; running it from `%LocalAppData%` is not a problem (confirmed by the user). `build.py` zips every file under `src/`, so the DLL is included; `.gitignore` must not exclude it.
 * `openSapModel.m` also deletes non-`.sdb` files in the model folder; this was **deliberately not ported**.
 * The SAP2000 imports are lazy, so the app starts even if `pythonnet` is missing.
+* Methods: `connect`, `open_model` (OpenFile + N-m-C), `frame_section_names`, `read_table`, and since GA step 8: `unlock_model` (`SetModelIsLocked(False)`), `assign_frame_section` (`FrameObj.SetSection(frame, section, eItemType.Objects)`), `save_model_as` (`File.Save(path)`, as in `runAll.m`). Python binding of `ref` / `out` parameters returns tuples (`read_table`, `frame_section_names`, `_check_version`).
 * **Verified by the user on a real SAP2000 v23 (2026-10-27):** connecting (attach or start), opening the model, `PropFrame.GetNameList` and the version check, with the calls running in a `QThread`.
 
-### Still to check (Auto Design)
+### Unverified (Auto Design)
 
-* `pythonnet` is in `runtime/requirements.txt`; check that it is also in `pyproject.toml`. `openpyxl` is listed twice in `runtime/requirements.txt`; remove the duplicate.
-* The step 2 filter and the Excel export/import round trip have no automated test yet (see known issues).
+Written without running on a real SAP2000; check these first when the user reports a problem:
+
+* `read_table` (`GetTableForDisplayArray` binding) and steps 5 to 7: the table and field names (`SectionName`, `Material`, `Type`, `Frame`, `AnalSect`, `Joint`, `GlobalX/Y/Z`, `JointI`, `JointJ`) come from the user's knowledge of SAP2000 database tables; the README of 2026-10-27 only recorded steps 1 to 3 as verified.
+* The new `SapClient` methods of step 8 (`SetSection` with the `eItemType` argument, `File.Save(path)` as Save As).
+* The same `SapClient`, created in the sections page's thread, is used from the run worker thread (a different `QThread`); COM/.NET apartment problems would show up as errors at the first SAP call of the run.
+* The run page and its worker were not seen running on a display.
+* `shutil.rmtree(onexc=...)` needs Python 3.12 (the runtime is 3.12.10).
+* Nothing of GA steps 5 to 8 has automated tests.
 
 ## SLD to SAP (current state)
 
@@ -178,13 +260,14 @@ Converts the piping SLD (CSV files written by `SLD2SAP.lsp` from the AutoCAD lay
 
 ## Rules
 
-* The shell (`src/ui/`) never contains plugin-specific logic; a plugin never controls the shell. Plugin UI lives in `plugins/<name>/ui/`, business logic in `plugins/<name>/services/`. Code shared by several plugins (like the SAP connection) lives in `src/core/`.
+* The shell (`src/ui/`) never contains plugin-specific logic; a plugin never controls the shell. Plugin UI lives in `plugins/<name>/ui/`, business logic in `plugins/<name>/services/` (no Qt there). Code shared by several plugins (like the SAP connection) lives in `src/core/`.
 * Do not remove or rename `main()`, `ping_app()` and `ask_update()` without updating the launcher contract (`ping_app()` is the post-update self-check; it must work without a display). Changes to `docs/contract.md` or `launcher.py` break installed copies and need a new Setup (and a higher `BOOTSTRAP_VERSION` / `min_bootstrap_version`).
-* The version number lives in `src/version.py` only (plus `pyproject.toml`, checked by `build.py`). Do not type it anywhere else. Every release gets an entry in `src/release_notes.json` (for users) and in the change log below (for developers).
-* Create planned files (e.g. further Auto Design `services/` modules) only when they are actually implemented. Every package folder needs an `__init__.py`, otherwise `pyproject.toml` (`packages.find include = ["src*"]`) skips it.
+* The version number lives in `src/version.py` only (plus `pyproject.toml`, checked by `build.py`). It is always the value written in the project files, unless the user explicitly says otherwise. Do not type it anywhere else. Every release gets an entry in `src/release_notes.json` (for users) and in the change log below (for developers).
+* Create planned files only when they are actually implemented. Every package folder needs an `__init__.py`, otherwise `pyproject.toml` (`packages.find include = ["src*"]`) skips it.
 * Always use the project runtime; `python` / `py` may not exist globally.
 * Tests of a plugin live in `tests/<plugin name>/`; tests of shell services in `tests/core/`; tests of the launcher in `tests/bootstrap/`.
-* After changing any code, state which file changed and its exact folder location (project instruction).
+* **Working with Claude (project instructions):** after changing any code, state which file changed and its exact folder location. If a project file that is needed is not among the provided references (for example `home_page.py`, `main_window.py`, `widgets.py`, `registry.py`), say so before guessing. Say clearly what was written but not run.
+* Auto Design: the GA only talks to the SAP model through small functions (`fitness_calculator`, `SapClient` methods) so the engine can be replaced later (surrogate); every evaluation should end up stored (see the project plan, `core/storage.py` is a stub); the reference file chosen by the user is never modified or saved.
 
 ## Development
 
@@ -195,11 +278,12 @@ Converts the piping SLD (CSV files written by `SLD2SAP.lsp` from the AutoCAD lay
 * Tests / lint: `.\runtime\python\python.exe -m pytest` (one folder: `.\runtime\python\python.exe -m pytest tests\sld_to_sap`, `tests\core`, `tests\bootstrap`) and `.\runtime\python\python.exe -m ruff check .`
 * To see the "What's new" window without a release: write `{"last_seen_version": "1.1.5"}` into `user_state.json` in the data folder (normally `%LocalAppData%\Structure Lab`) and start the app.
 * To see the update window alone: call `ask_update(<request.json>)` from `src.__main__` with a file `{"current": "1.1.5", "new": "1.2.1", "mandatory": false, "notes": [...]}` (it prints the answer on stdout).
+* Auto Design logs go to `app.log` (`Step 5 ...`, `Step 8 - initial population ...`, `Status: ...`); a failed run also shows its message on the run page.
 * Release: see "Release and update system" above (`tools\build.py`, `tools\publish.py`; Inno Setup 6/7 only on the build PC, e.g. `C:\Users\b.sarkheil\AppData\Local\Programs\Inno Setup 7\ISCC.exe`).
 
 ## Status
 
-Done: project structure, embedded runtime, VSCode debugging, dark-themed shell (title bar, sidebar, Home), plugin registry, page switching, Auto Design steps 1–3 (SAP2000 file drop area, sections table with filter, bulk Yes/No, undo/redo, counters and Excel import/export, GA settings form; enabled again and confirmed by the user on a real SAP2000 v23, including the connection layer), SLD to SAP services (complete algorithm, tested on the guide's examples) and its single-page UI with automatic, collected error checking, about page, loading overlay, and the full release system (installer, launcher with auto-update from the server share, build and publish tools). Version 1.1.5 was the first release; 1.1.6 is published and adds the release notes window, the update question with a mandatory mode (launcher 1.1.0, needs a new Setup) and the SLD to SAP check changes; `version.py` now shows 1.2.1 (Auto Design development, not released yet).
+Done: project structure, embedded runtime, VSCode debugging, dark-themed shell (title bar, sidebar, Home), plugin registry, page switching, **Auto Design**: wizard steps 1 to 3 (confirmed by the user on a real SAP2000 v23), the live run page with cooperative cancel, the run worker thread, the database-folder check/clear with the user warning, GA steps 5 to 8 written (steps 5 to 7 read the model through database tables; step 8 builds the initial population) with `classify_frame` and `fitness_calculator` still missing; SLD to SAP services (complete algorithm, tested on the guide's examples) and its single-page UI with automatic, collected error checking; about page; loading overlay; the full release system (installer, launcher with auto-update from the server share, build and publish tools). Version 1.1.5 was the first release; 1.1.6 is published and adds the release notes window, the update question with a mandatory mode (launcher 1.1.0, needs a new Setup) and the SLD to SAP check changes; `version.py` shows 1.2.1 (Auto Design development, not released yet).
 
 Known technical issues to fix next:
 
@@ -207,32 +291,38 @@ Known technical issues to fix next:
 * `HomePage` has a fixed `plugin_order` list of plugin names, which is plugin-specific knowledge inside the shell; it should follow the registry order (a new plugin not named there never appears on Home).
 * Dead QSS rules in `ui/theme.py`: `QLabel#aboutName` (no such label any more) and `QFrame#aboutCard:pressed` (`QFrame` has no pressed state).
 * `plugins/` uses absolute `src.` imports while `ui/` uses relative ones; unify (launcher runs the app from `app\<version>\`, with that folder first in `sys.path`, so both styles work). The Auto Design files, `core/sap_client.py` and the SLD to SAP plugin follow the absolute style.
+* `auto_design/ui/ga_settings_page.py` imports `folder_icon` from `plugins/sld_to_sap/ui/icons.py` (a plugin importing another plugin); move the icon to `src/ui/` when convenient.
 * Dependencies are listed in both `pyproject.toml` and `runtime/requirements.txt`. Dev packages are left out of the release runtime by `tools/build.py` (names listed in `DEV_ONLY`), but a cleaner fix is a separate dev requirements file.
 * The sidebar and Home now use PNG icons; the only text-glyph fallback left is `◈` in `TitleBar` when `logo4.ico` is missing.
-* Step 2 does not stop its worker thread if the app closes while loading.
-* Auto Design has no automated test yet. `compile_name_filter` (in `sections_page.py`), `services/sections_excel.py` and the parsing helpers in `ui/fields.py` are pure logic and easy to cover in `tests/auto_design/`.
-* SLD to SAP runs its checks in a background worker (see change log); re-check on a large model.
-* `server_sim/` was removed (it only held a sample `latest.json`).
+* Step 2 does not stop its worker thread if the app closes while loading; the run worker is not stopped either when the window closes during a run.
+* Auto Design has no automated test yet. Pure logic that is easy to cover in `tests/auto_design/`: `compile_name_filter` (in `sections_page.py`), `services/sections_excel.py`, the parsing helpers in `ui/fields.py`, `build_gene_options`, `random_genes`, `database_folder.py` (use a temp folder), `RunMonitor`.
+* SLD to SAP runs its checks in a background worker; re-check on a large model.
 * A mandatory update is decided by the newest version on the server only (see the release steps).
 
 ## Next session
 
-1. Build the next Auto Design wizard step after the GA settings page (the user will describe it; `AutoDesignWizard._on_params_accepted` has the TODO). Eventually: GA logic in `plugins/auto_design/services/`, evaluation behind `evaluate(x)`, storing every evaluation from day one (see the plan doc).
-2. Check `pythonnet` in `pyproject.toml` and remove the duplicate `openpyxl` line in `runtime/requirements.txt`.
-3. Look at the two new windows (What's new, Update available; both modes) and fix whatever the display shows (see "Unverified (release system)").
-4. Build a new Setup (launcher 1.1.0, `min_bootstrap_version` 1.1.0) with `build.py --installer`, install it on the user's PC, then release the next version with `build.py` + `publish.py` (add an entry to `src/release_notes.json` first) and check on a user PC that the question appears at the next launch and the update works (`logs\launcher.log`). Try a mandatory release (`--mandatory`) and one runtime change (new library).
-5. Check the Start Menu / taskbar icon of the new Setup.
-6. SLD to SAP: run `tests/sld_to_sap/test_sld_to_sap.py` with real pytest and fix expectations changed by the 2026-10-25 code changes.
-7. SLD to SAP: supply the second sample set (CSV files, Connectivity, the two MATLAB outputs) so a test compares the 5 joints and 116 load records bit-for-bit; then a small complete sample set for the missing cases (guide section 14).
-8. Ideas the user declined for Auto Design step 2, do not build unless asked again: smart grouping by section family or dimensions, remembering the last choice per section name, saved templates, a warning when a role has no section. Also declined for now: a background "new version is ready, restart" notice while the app is open.
+1. **Auto Design:** the user will describe `classify_frame` (step 8.2.1.1: role of a frame from joint coordinates, `frameConnectivity` and `tolerance` in cm; coordinates are in meters), then `fitness_calculator`, then the next steps (9 and on, one at a time). Wire `monitor.generation(GenerationStats)` when the generation loop exists; replace the temporary progress estimate; use or drop the unused settings (`updateSeismicLoads`, `penalizeLevel`, `mutationPercent`, `tournamentSize`).
+2. Run Auto Design on the real SAP2000 v23 and report what fails (see "Unverified (Auto Design)"). Until `classify_frame` is written the run stops in step 8 with `NotImplementedError`.
+3. Check `pythonnet` in `pyproject.toml` and remove the duplicate `openpyxl` line in `runtime/requirements.txt`.
+4. Look at the two new windows (What's new, Update available; both modes) and fix whatever the display shows (see "Unverified (release system)").
+5. Build a new Setup (launcher 1.1.0, `min_bootstrap_version` 1.1.0) with `build.py --installer`, install it on the user's PC, then release the next version with `build.py` + `publish.py` (add an entry to `src/release_notes.json` first) and check on a user PC that the question appears at the next launch and the update works (`logs\launcher.log`). Try a mandatory release (`--mandatory`) and one runtime change (new library).
+6. Check the Start Menu / taskbar icon of the new Setup.
+7. SLD to SAP: run `tests/sld_to_sap/test_sld_to_sap.py` with real pytest and fix expectations changed by the 2026-10-25 code changes.
+8. SLD to SAP: supply the second sample set (CSV files, Connectivity, the two MATLAB outputs) so a test compares the 5 joints and 116 load records bit-for-bit; then a small complete sample set for the missing cases (guide section 14).
+9. Ideas the user declined for Auto Design step 2, do not build unless asked again: smart grouping by section family or dimensions, remembering the last choice per section name, saved templates, a warning when a role has no section. Also declined for now: a background "new version is ready, restart" notice while the app is open.
+10. At the end of the Auto Design work: write the complete document of the implemented algorithm (`docs/`), and keep this README short on algorithm details.
 
 ## Change log
-* [1.2.1] - (2026-10-??):
+* [1.2.1] - (2026-11-??):
     - Auto Design development resumed: `AUTO_DESIGN_ENABLED` set to `True` in `plugins/registry.py` (Auto Design is a normal tool again on Home and in the sidebar)
-    - Auto Design wizard now has three steps: step 1 SAP2000 file drop area (`ui/page.py`), step 2 sections table (`ui/sections_page.py`), step 3 GA settings (new `ui/ga_settings_page.py`, shared form widgets in new `ui/fields.py`); `ui/wizard.py` keeps `sap_path`, `sections`, `params`, `sap`; `AutoDesignParams` no longer holds the SAP file path
-    - SAP2000 connection and the three steps confirmed by the user on a real SAP2000 v23
-    - README updated to match (layout, Auto Design section, status, next session)
-    - Continue developing Auto Design plugin
+    - Auto Design wizard: step 1 SAP2000 file drop area (`ui/page.py`), step 2 sections table (`ui/sections_page.py`), step 3 GA settings (new `ui/ga_settings_page.py`, shared form widgets in new `ui/fields.py`); `AutoDesignParams` no longer holds the SAP file path; SAP2000 connection and these three steps confirmed by the user on a real SAP2000 v23
+    - (2026-10-28) GA settings gained `updateSeismicLoads` and `modelsFolder` (`params.py`, `ui/ga_settings_page.py`); Simulate Evolution button with its icon (`ui/icons.py`, `Run-Genetic.png`)
+    - (2026-10-28) run page (`ui/run_page.py`): progress bar, live tiles, evolution chart, status log, Cancel / Back; `services/run_monitor.py` (`RunMonitor`, `RunCancelled`, `GenerationStats`); `ui/wizard.py` runs the GA in `_RunWorker` (QThread) and feeds the page
+    - (2026-10-28) GA steps 5 to 7 in `services/ga_run.py` (`GAContext`, `run_ga`) with `section_materials.py` (Material Type per section), `frame_assignments.py` (section per frame), `model_geometry.py` (joint coordinates, frame connectivity), `sap_tables.py`; `SectionPermission.materialType` added; `SapClient.read_table` added
+    - (2026-11-01) GA step 8 (initial population): new `services/population.py` (`Individual`, role constants, `classify_frame` stub, `build_gene_options`, `random_genes`) and `services/fitness.py` (`fitness_calculator` stub); `ga_run.py` (`GAContext.sapPath`, `population`, `rng`, `step8_initial_population`); `wizard.py` passes `sapPath`
+    - (2026-11-01) database folder is cleared at the start of every run: new `services/database_folder.py`, `ga_run.prepare_database_folder`, warning dialog in `wizard.py` (`_confirm_database_folder`)
+    - (2026-11-01) `core/sap_client.py`: `unlock_model`, `assign_frame_section`, `save_model_as`
+    - README rewritten to match (layout, Auto Design section, unverified list, next session)
 
 * [1.1.6] - (2026-10-27):
     - version raised to 1.1.6 (`version.py`; `pyproject.toml` must show the same); `docs/sld_to_sap_algorithm.md` carries the app version number
@@ -259,7 +349,7 @@ Known technical issues to fix next:
     - `__main__.py`: `setup_logging()` is now called at the start of `main()`
     - `server_sim/` removed
 
-* [1.0.0] - (2026-10-20): 
+* [1.0.0] - (2026-10-20):
     - initial shell (PySide6, embedded Python 3.12.10, dark theme, title bar, sidebar)
     - initial plugin architecture
     - plugin registry wired to navigation and Home
