@@ -1,8 +1,12 @@
-"""Auto Design - the database folder of a run (no Qt): check, describe, clear.
+r"""Auto Design - the database folder of a run (no Qt): check, describe, clear, copy a model.
 
 The run starts by deleting everything inside the database folder (the
 wizard asks the user first). Because a wrong folder would be a disaster,
 `check_folder_usable` refuses the dangerous ones.
+
+Layout of the folder during a run:
+
+    <modelsFolder>\Generation-<g>\Gen-<g>-<m>\Gen-<g>-<m>.sdb   (members)
 """
 from __future__ import annotations
 
@@ -23,6 +27,12 @@ class FolderState:
     exists: bool
     itemCount: int  # files and folders directly inside
     generationFolders: int  # "Generation-*" folders directly inside
+
+
+def generation_folder(models_folder: str | Path, generation: int) -> Path:
+    """`<models folder>/Generation-<generation>`."""
+
+    return Path(models_folder) / f"{GENERATION_PREFIX}{generation}"
 
 
 def check_folder_usable(folder: str | Path, sap_path: str | Path) -> str | None:
@@ -96,3 +106,25 @@ def clear_folder(folder: str | Path) -> None:
             ) from exc
 
     logger.info("Database folder cleared: %s", path)
+
+
+def copy_member_model(source: str | Path, member_folder: str | Path, name: str) -> Path:
+    """Copy the model file `source` (.sdb) to `<member_folder>/<name>.sdb`
+    (the folder is created); returns the new file path. Only the .sdb is
+    copied: it keeps the analysis results, and the other files SAP2000
+    wrote while running are not needed to open it.
+    """
+
+    folder = Path(member_folder)
+    target = folder / f"{name}.sdb"
+
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+    except OSError as exc:
+        raise RuntimeError(
+            f"Could not copy '{source}' to '{target}': {exc}. "
+            "Close it (Explorer, SAP2000, Excel ...) and run again."
+        ) from exc
+
+    return target

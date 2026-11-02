@@ -1,0 +1,108 @@
+"""Auto Design - genetic operators of the generation loop (no Qt, no SAP).
+
+Step 9.1.1 / 9.1.2  `tournament_parents`: tournament selection of two parents.
+Step 9.1.3          `random_cut_points`: three different random cut points.
+Step 9.1.4          `three_point_crossover`: two children from two parents.
+
+The DNA of a member is its genes in the order of `ctx.frameSections`
+(the SAP table order read in step 6). Everything here works on plain
+data, so it can be tested without SAP2000.
+"""
+from __future__ import annotations
+
+import random
+from collections.abc import Callable, Sequence
+
+from src.plugins.auto_design.services.population import Individual
+
+
+def tournament_parents(
+    population: Sequence[Individual],
+    tournamentSize: int,
+    rng: random.Random,
+    score: Callable[[Individual], float],
+) -> tuple[Individual, Individual]:
+    """Steps 9.1.1 and 9.1.2.
+
+    `tournamentSize` DIFFERENT members are drawn at random from the
+    population (a member cannot be drawn twice), and the two with the
+    highest `score` are the parents. Ties keep the order of the draw.
+    """
+
+    if tournamentSize < 2:
+        raise ValueError(
+            "Tournament Size must be at least 2: two parents are needed."
+        )
+
+    if tournamentSize > len(population):
+        raise ValueError(
+            f"Tournament Size ({tournamentSize}) is larger than the "
+            f"population ({len(population)})."
+        )
+
+    drawn = rng.sample(list(population), tournamentSize)
+    ranked = sorted(drawn, key=score, reverse=True)  # stable sort
+
+    return ranked[0], ranked[1]
+
+
+def select_survivors(
+    pool: Sequence[Individual],
+    score: Callable[[Individual], float],
+    count: int,
+) -> list[Individual]:
+    """Step 9.2: the `count` members of `pool` with the HIGHEST score,
+    best first. On equal scores the member that comes first in `pool` wins
+    (so put the parents before the children).
+    """
+
+    if count > len(pool):
+        raise ValueError(f"Cannot keep {count} members out of {len(pool)}.")
+
+    return sorted(pool, key=score, reverse=True)[:count]  # stable sort
+
+
+def random_cut_points(geneCount: int, rng: random.Random) -> tuple[int, int, int]:
+    """Step 9.1.3: three different numbers between 1 and `geneCount`,
+    returned in increasing order.
+
+    Cut point c means: genes 1..c stay before the cut, gene c+1 is the
+    first one after it (so the last part is empty when c3 == geneCount).
+    """
+
+    if geneCount < 3:
+        raise ValueError(
+            f"Three-point crossover needs at least 3 genes (frames), got {geneCount}."
+        )
+
+    c1, c2, c3 = sorted(rng.sample(range(1, geneCount + 1), 3))
+
+    return c1, c2, c3
+
+
+def three_point_crossover(
+    frames: Sequence[str],
+    genesA: dict[str, str],
+    genesB: dict[str, str],
+    cuts: tuple[int, int, int],
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Step 9.1.4: both parents are cut into four parts at `cuts`; the
+    parts are swapped two by two:
+
+        child 1 = A1 B2 A3 B4        child 2 = B1 A2 B3 A4
+
+    `frames` is the DNA order (frame names); genes are frame -> section.
+    """
+
+    child1: dict[str, str] = {}
+    child2: dict[str, str] = {}
+
+    for index, frame in enumerate(frames):
+        position = index + 1  # genes are numbered from 1
+        part = sum(position > cut for cut in cuts)  # 0, 1, 2 or 3 (= part 1..4)
+        swap = part % 2 == 1  # parts 2 and 4 are exchanged
+
+        child1[frame] = genesB[frame] if swap else genesA[frame]
+        child2[frame] = genesA[frame] if swap else genesB[frame]
+
+    return child1, child2

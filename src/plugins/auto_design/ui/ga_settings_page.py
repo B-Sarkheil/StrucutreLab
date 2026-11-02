@@ -137,7 +137,7 @@ class GASettingsPage(QWidget):
         grid.setColumnStretch(1, 1)
 
         self.popSize = Field("Population Size", "Positive integer")
-        self.tournamentSize = Field("Tournament Size", "Positive integer")
+        self.tournamentSize = Field("Tournament Size", "Integer, 2 or more")
         self.genSize = Field("Number of Generations", "Positive integer")
         self.mutationPercent = Field("Mutation Percent (%)", "0 to 100")
         self.penalizeLevel = Field("Penalize Level Coefficient", "Positive number")
@@ -342,6 +342,10 @@ class GASettingsPage(QWidget):
 
         if tournament_size > pop_size:
             self.tournamentSize.set_error("Must not exceed the population size.")
+            return
+
+        if tournament_size < 2:
+            self.tournamentSize.set_error("Must be at least 2 (two parents are needed).")
             return
 
         self.run_requested.emit(
