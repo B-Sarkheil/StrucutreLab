@@ -22,7 +22,7 @@ from dataclasses import dataclass, field, replace
 
 from src.core.sap_client import SapClient
 from src.plugins.auto_design.params import AutoDesignParams, SectionPermission
-from src.plugins.auto_design.services.run_monitor import RunMonitor
+from src.plugins.auto_design.services.run_monitor import GenerationStats, RunMonitor
 from src.plugins.auto_design.services.section_materials import read_material_types
 from src.plugins.auto_design.services.frame_assignments import read_frame_sections
 from src.plugins.auto_design.services.model_geometry import (
@@ -47,6 +47,7 @@ from src.plugins.auto_design.services.database_folder import (
     clear_folder,
     copy_member_model,
 )
+
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +196,26 @@ def _make_member(
 
     return individual
 
+def _report_generation(ctx: GAContext, generation: int) -> None:
+    """Send the numbers of the current population to the run page
+    (generation 0 = the initial population)."""
+
+    def rank(individual: Individual):
+        return ranking_key(individual.fitness)
+
+    best = min(ctx.population, key=rank)  # the best member by the GA ranking
+    mean_weight = sum(m.fitness.weight for m in ctx.population) / len(ctx.population)
+
+    ctx.monitor.generation(
+        GenerationStats(
+            generation=generation,
+            bestWeight=best.fitness.weight,
+            meanWeight=mean_weight,
+            meanRatio=best.fitness.meanRatio,
+            maxRatio=best.fitness.maxRatio,
+        )
+    )
+
 
 def step8_initial_population(ctx: GAContext) -> None:
     """Step 8: build the first generation (reference model + random members)."""
@@ -255,6 +276,7 @@ def step8_initial_population(ctx: GAContext) -> None:
     logger.info(
         "Step 8 - initial population: %d members in %s", len(ctx.population), generation_dir
     )
+    _report_generation(ctx, 0)
 
 
 def step9_generations(ctx: GAContext) -> None:
@@ -323,8 +345,8 @@ def step9_generations(ctx: GAContext) -> None:
         )
 
         _step9_2_next_generation(ctx, g, total, rank)
+        _report_generation(ctx, g)
 
-        # TODO: 9.3 ...
 
 
 def _step9_2_next_generation(ctx: GAContext, g: int, size: int, score) -> None:

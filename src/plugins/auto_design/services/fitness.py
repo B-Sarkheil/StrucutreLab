@@ -64,7 +64,7 @@ class CvWeights:
 class Fitness:
     """Result of `fitness_calculator`."""
 
-    weight: float  # W (N, the model is in N-m-C)
+    weight: float  # W (kg: the model is in kgf-m-C)
     cv: float  # constraint violation, 0 = no violation
     elementViolation: float  # v_e
     globalViolations: dict[str, float]  # name -> v of every global constraint

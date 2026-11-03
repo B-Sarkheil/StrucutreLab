@@ -2,7 +2,7 @@ cd "D:\Python Library\StructureLab"
 
 
 git add .
-git commit -m "Update README.md"
+git commit -m "Auto Design Plugin developed: classify frame and new page for edit, fitness_calculator algorithm"
 git push origin main
 
 

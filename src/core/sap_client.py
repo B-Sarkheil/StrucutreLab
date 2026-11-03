@@ -133,10 +133,10 @@ class SapClient:
         if ret != 0:
             raise SapError(f"SAP2000 could not open the file: {sdb_path}")
 
-        ret = self.model.SetPresentUnits(self.api.eUnits.N_m_C)
+        ret = self.model.SetPresentUnits(self.api.eUnits.kgf_m_C)
 
         if ret != 0:
-            raise SapError("Could not set SAP2000 units to N-m-C.")
+            raise SapError("Could not set SAP2000 units to kgf_m_C.")
 
     def frame_section_names(self) -> list[str]:
         """Names of all frame sections defined in the open model."""
@@ -217,11 +217,3 @@ class SapClient:
     def run_concrete_design(self) -> bool:
         return self.model.DesignConcrete.StartDesign() == 0
 
-    def available_table_keys(self) -> list[str]:
-        # pythonnet returns (ret, NumberTables, TableKey, TableName, ImportType)
-        result = self.model.DatabaseTables.GetAvailableTables(0, None, None, None)
-
-        if not isinstance(result, tuple) or len(result) != 5 or result[0] != 0:
-            raise SapError(f"Unexpected result of GetAvailableTables: {result!r}")
-
-        return [str(k) for k in list(result[2] or [])[: int(result[1])]]

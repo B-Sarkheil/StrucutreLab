@@ -1,14 +1,16 @@
 {
-    "version": "1.0.0",
-    "configurations": [
-        {
-            "name": "Structure Lab",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "src",
-            "python": "${workspaceFolder}/runtime/python/python.exe",
-            "console": "integratedTerminal",
-            "justMyCode": true
-        }
-    ]
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Structure Lab",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "src",
+      "cwd": "${workspaceFolder}",
+      "python": "${workspaceFolder}\\runtime\\python\\python.exe",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "subProcess": false
+    }
+  ]
 }
