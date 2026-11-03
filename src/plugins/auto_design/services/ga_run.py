@@ -29,7 +29,7 @@ from src.plugins.auto_design.services.model_geometry import (
     read_frame_connectivity,
     read_joint_coordinates,
 )
-from src.plugins.auto_design.services.fitness import fitness_calculator, fitness_value
+from src.plugins.auto_design.services.fitness import fitness_calculator, ranking_key
 from src.plugins.auto_design.services.genetic_operators import (
     random_cut_points,
     select_survivors,
@@ -39,7 +39,6 @@ from src.plugins.auto_design.services.genetic_operators import (
 from src.plugins.auto_design.services.population import (
     Individual,
     build_gene_options,
-    classify_frame,
     member_name,
     random_genes,
 )
@@ -52,7 +51,7 @@ from src.plugins.auto_design.services.database_folder import (
 logger = logging.getLogger(__name__)
 
 # The whole algorithm has 20 steps; steps 1-4 happen in the wizard pages
-# (file, sections, settings, Simulate Evolution), so the run starts at 5.
+# (file, sections, frame types + settings, Simulate Evolution), so the run starts at 5.
 TOTAL_STEPS = 20
 FIRST_RUN_STEP = 5
 
@@ -63,6 +62,7 @@ class GAContext:
     params: AutoDesignParams
     sections: list[SectionPermission]
     sapPath: str  # the reference .sdb chosen in step 1
+    frameRoles: dict[str, str] = field(default_factory=dict)  # frame -> role (wizard, "Frame types" page)
     frameSections: dict[str, str] = field(default_factory=dict)  # frame -> section (step 6)
     jointCoordinates: dict[str, tuple[float, float, float]] = field(default_factory=dict)  # (step 7)
     frameConnectivity: dict[str, tuple[str, str]] = field(default_factory=dict)  # (step 7)
@@ -202,17 +202,24 @@ def step8_initial_population(ctx: GAContext) -> None:
     # Final size is always even (members are paired later).
     total = ctx.params.popSize + ctx.params.popSize % 2
 
-    # Roles and allowed sections do not change between members: compute once,
-    # before any folder is created, so a problem stops the run at the start.
+    # The role of every frame (column, beam, ...) was decided once, on the
+    # "Frame types" page, from the reference model. Every frame read in
+    # step 6 must have one.
+    missing_roles = sorted(set(ctx.frameSections) - set(ctx.frameRoles))
+
+    if missing_roles:
+        shown = ", ".join(missing_roles[:10])
+        more = f" (and {len(missing_roles) - 10} more)" if len(missing_roles) > 10 else ""
+        raise ValueError(
+            f"{len(missing_roles)} frame(s) have no type from the Frame types page: "
+            f"{shown}{more}. Go back and classify the frames again."
+        )
+
+    # Allowed sections do not change between members: compute once, before
+    # any folder is created, so a problem stops the run at the start.
     ctx.monitor.status("Preparing the allowed sections of every frame")
 
-    roles = {
-        frame: classify_frame(
-            frame, ctx.frameConnectivity, ctx.jointCoordinates, ctx.params.tolerance
-        )
-        for frame in ctx.frameSections
-    }
-    options = build_gene_options(ctx.frameSections, roles, ctx.sections)
+    options = build_gene_options(ctx.frameSections, ctx.frameRoles, ctx.sections)
 
     # 8.1  Generation-1 / Gen-1-1 with a copy of the reference file
     generation_dir = Path(ctx.params.modelsFolder) / "Generation-1"
@@ -273,8 +280,10 @@ def step9_generations(ctx: GAContext) -> None:
             f"Three-point crossover needs at least 3 frames, the model has {len(frames)}."
         )
 
-    def score(individual: Individual) -> float:
-        return fitness_value(individual.fitness)  # larger = better
+    def rank(individual): 
+        return ranking_key(individual.fitness)
+    
+
 
     for g in range(1, ctx.params.genSize + 1):
         ctx.generation = g
@@ -287,7 +296,7 @@ def step9_generations(ctx: GAContext) -> None:
 
             # 9.1.1 / 9.1.2  tournament: the two best of tournamentSize random members
             parent_a, parent_b = tournament_parents(
-                ctx.population, ctx.params.tournamentSize, ctx.rng, score
+                ctx.population, ctx.params.tournamentSize, ctx.rng, rank
             )
 
             # 9.1.3  three different random cut points (1 .. number of genes)
@@ -313,7 +322,7 @@ def step9_generations(ctx: GAContext) -> None:
             "Step 9.1 - g=%d: %d children in Generation-%d", g, len(ctx.offspring), g
         )
 
-        _step9_2_next_generation(ctx, g, total, score)
+        _step9_2_next_generation(ctx, g, total, rank)
 
         # TODO: 9.3 ...
 
@@ -333,7 +342,7 @@ def _step9_2_next_generation(ctx: GAContext, g: int, size: int, score) -> None:
         f"Generation {g + 1}: copying the best {size} of {len(pool)} members"
     )
 
-    survivors = select_survivors(pool, score, size)
+    survivors = select_survivors(pool, rank, size)
 
     # The last evaluated model is still open in SAP2000 (its file may be
     # locked): open the reference model, which is outside the database folder.

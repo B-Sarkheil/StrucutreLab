@@ -9,6 +9,7 @@ from PySide6.QtCore import QThread, Signal
 from src.plugins.auto_design.params import AutoDesignParams, SectionPermission
 from src.plugins.auto_design.ui.ga_settings_page import GASettingsPage
 from src.plugins.auto_design.ui.page import AutoDesignPage
+from src.plugins.auto_design.ui.roles_page import FrameRolesPage
 from src.plugins.auto_design.ui.run_page import (
     CANCELLED,
     FAILED,
@@ -17,6 +18,7 @@ from src.plugins.auto_design.ui.run_page import (
 )
 from src.plugins.auto_design.ui.sections_page import SectionsPage
 from src.plugins.auto_design.services.ga_run import GAContext, run_ga
+from src.plugins.auto_design.services.population import ROLE_LABELS, ROLES
 from src.plugins.auto_design.services.run_monitor import RunCancelled
 from src.plugins.auto_design.services.database_folder import (
     check_folder_usable,
@@ -60,8 +62,9 @@ class _RunWorker(QThread):
         self.succeeded.emit(self._context)
 
 class AutoDesignWizard(QStackedWidget):
-    """Step 1: SAP2000 file  ->  Step 2: allowed sections  ->  Step 3: GA settings
-    ->  run page (live progress; Cancel, then Back to the settings)."""
+    """Step 1: SAP2000 file  ->  Step 2: allowed sections  ->  Step 3: frame types
+    ->  Step 4: GA settings  ->  run page (live progress; Cancel, then Back to the
+    settings)."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -71,6 +74,7 @@ class AutoDesignWizard(QStackedWidget):
         # Collected data
         self.sap_path: str | None = None
         self.sections: list[SectionPermission] | None = None
+        self.frame_roles: dict[str, str] | None = None  # frame -> role, from the Frame types page
         self.params: AutoDesignParams | None = None
         self.sap = None  # SapClient, set once step 2 has loaded the model
 
@@ -79,6 +83,7 @@ class AutoDesignWizard(QStackedWidget):
         self._run_worker: _RunWorker | None = None
 
         self._sections_page: SectionsPage | None = None
+        self._roles_page: FrameRolesPage | None = None
         self._ga_page: GASettingsPage | None = None
         self._run_page: RunPage | None = None
 
@@ -104,6 +109,7 @@ class AutoDesignWizard(QStackedWidget):
 
             self.sections = None
             self.sap = None
+            self._drop_roles_page()  # the frame types belong to the old file
 
             page = SectionsPage(sap_path)
             page.back_requested.connect(lambda: self.setCurrentWidget(self.file_page))
@@ -117,8 +123,16 @@ class AutoDesignWizard(QStackedWidget):
 
         self.setCurrentWidget(page)
 
+    def _drop_roles_page(self) -> None:
+        if self._roles_page is not None:
+            self.removeWidget(self._roles_page)
+            self._roles_page.deleteLater()
+            self._roles_page = None
+
+        self.frame_roles = None
+
     # -----------------------------------------------------------------
-    # Step 2 -> 3
+    # Step 2 -> 3 (frame types)
     # -----------------------------------------------------------------
 
     def _on_sections_accepted(self, sections: list[SectionPermission]) -> None:
@@ -135,13 +149,55 @@ class AutoDesignWizard(QStackedWidget):
             sum(s.allowedForVerticalBrace for s in sections),
         )
 
+        self._show_roles()
+
+    def _show_roles(self) -> None:
+        # Created once per reference file, so the types the user edited
+        # survive Back / Next. The frame types do not depend on the sections.
+        if self._roles_page is None:
+            if self.sap is None or not self.sap_path:
+                logger.error("Cannot show the Frame types page: no SAP2000 connection")
+                return
+
+            page = FrameRolesPage(self.sap_path, self.sap)
+            page.back_requested.connect(self._back_to_sections)
+            page.next_requested.connect(self._on_roles_accepted)
+
+            self._roles_page = page
+            self.addWidget(page)
+            self.setCurrentWidget(page)
+            page.start_loading()
+            return
+
+        self.setCurrentWidget(self._roles_page)
+
+    def _back_to_sections(self) -> None:
+        if self._sections_page is not None:
+            self.setCurrentWidget(self._sections_page)
+
+    # -----------------------------------------------------------------
+    # Step 3 -> 4 (GA settings)
+    # -----------------------------------------------------------------
+
+    def _on_roles_accepted(self, roles: dict[str, str]) -> None:
+        self.frame_roles = dict(roles)
+
+        logger.info(
+            "Frame types accepted: %d frames, %s",
+            len(roles),
+            ", ".join(
+                f"{sum(r == role for r in roles.values())} {ROLE_LABELS[role].lower()}"
+                for role in ROLES
+            ),
+        )
+
         self._show_ga_settings()
 
     def _show_ga_settings(self) -> None:
         # Created once, so the values typed by the user survive Back / Next.
         if self._ga_page is None:
             page = GASettingsPage(self.sap_path or "")
-            page.back_requested.connect(self._back_to_sections)
+            page.back_requested.connect(self._back_to_roles)
             page.run_requested.connect(self._on_params_accepted)
 
             self._ga_page = page
@@ -153,12 +209,12 @@ class AutoDesignWizard(QStackedWidget):
 
         self.setCurrentWidget(self._ga_page)
 
-    def _back_to_sections(self) -> None:
-        if self._sections_page is not None:
-            self.setCurrentWidget(self._sections_page)
+    def _back_to_roles(self) -> None:
+        if self._roles_page is not None:
+            self.setCurrentWidget(self._roles_page)
 
     # -----------------------------------------------------------------
-    # Step 3 -> run
+    # Step 4 -> run
     # -----------------------------------------------------------------
 
     def _on_params_accepted(self, params: AutoDesignParams) -> None:
@@ -166,14 +222,13 @@ class AutoDesignWizard(QStackedWidget):
 
         logger.info(
             "GA settings accepted: pop=%d, tournament=%d, generations=%d, "
-            "mutation=%.2f%%, penalty=%.3g, tolerance=%.3g cm, "
+            "mutation=%.2f%%, penalty=%.3g, "
             "update seismic loads=%s, models folder=%s",
             params.popSize,
             params.tournamentSize,
             params.genSize,
             params.mutationPercent,
             params.penalizeLevel,
-            params.tolerance,
             params.updateSeismicLoads,
             params.modelsFolder,
         )
@@ -239,7 +294,13 @@ class AutoDesignWizard(QStackedWidget):
         if self._run_worker is not None:
             return
 
-        if self.sap is None or self.sections is None or self.params is None or not self.sap_path:
+        if (
+            self.sap is None
+            or self.sections is None
+            or self.frame_roles is None
+            or self.params is None
+            or not self.sap_path
+        ):
             logger.error("Cannot start the run: input data is missing")
             return
 
@@ -248,6 +309,7 @@ class AutoDesignWizard(QStackedWidget):
             params=self.params,
             sections=list(self.sections),
             sapPath=self.sap_path,
+            frameRoles=dict(self.frame_roles),
         )
         worker = _RunWorker(context, self)
 

@@ -4,11 +4,14 @@ Collects the GA parameters, the "update seismic loads" option and the
 database folder where the models of every generation are saved. Values
 are validated when the user presses "Simulate Evolution"; on success the
 page emits `run_requested` with an `AutoDesignParams`. Back returns to
-the sections table.
+the frame types page.
 
 The database folder defaults to a folder named "SAP Models" next to the
 SAP2000 reference file chosen in step 1 (see `set_sap_path`). The folder
 is only checked here, not created.
+
+(The tolerance to detect beams / columns is not asked here any more: it
+belongs to the "Frame types" page, `ui/roles_page.py`.)
 """
 from __future__ import annotations
 
@@ -141,9 +144,6 @@ class GASettingsPage(QWidget):
         self.genSize = Field("Number of Generations", "Positive integer")
         self.mutationPercent = Field("Mutation Percent (%)", "0 to 100")
         self.penalizeLevel = Field("Penalize Level Coefficient", "Positive number")
-        self.tolerance = Field(
-            "Tolerance to Detect Member as Beam or Column (cm)", "Positive number"
-        )
 
         # Default values
         self.popSize.edit.setText("100")
@@ -151,14 +151,12 @@ class GASettingsPage(QWidget):
         self.genSize.edit.setText("10")
         self.mutationPercent.edit.setText("0")
         self.penalizeLevel.edit.setText("1")
-        self.tolerance.edit.setText("1")
 
         grid.addWidget(self.popSize, 0, 0)
         grid.addWidget(self.tournamentSize, 0, 1)
         grid.addWidget(self.genSize, 1, 0)
         grid.addWidget(self.mutationPercent, 1, 1)
         grid.addWidget(self.penalizeLevel, 2, 0)
-        grid.addWidget(self.tolerance, 2, 1)
 
         card_layout.addLayout(grid)
         card_layout.addSpacing(8)
@@ -244,7 +242,6 @@ class GASettingsPage(QWidget):
             self.genSize,
             self.mutationPercent,
             self.penalizeLevel,
-            self.tolerance,
             self.modelsFolder,
         ):
             field.edit.returnPressed.connect(self._on_run)
@@ -326,7 +323,6 @@ class GASettingsPage(QWidget):
         gen_size = parse_int(self.genSize)
         mutation_percent = parse_float(self.mutationPercent, maximum=100.0)
         penalize_level = parse_float(self.penalizeLevel)
-        tolerance = parse_float(self.tolerance)
         models_folder = self._check_folder()
 
         if None in (
@@ -335,7 +331,6 @@ class GASettingsPage(QWidget):
             gen_size,
             mutation_percent,
             penalize_level,
-            tolerance,
             models_folder,
         ):
             return
@@ -355,7 +350,6 @@ class GASettingsPage(QWidget):
                 genSize=gen_size,
                 mutationPercent=mutation_percent,
                 penalizeLevel=penalize_level,
-                tolerance=tolerance,
                 updateSeismicLoads=self.updateSeismicLoads.isChecked(),
                 modelsFolder=models_folder,
             )

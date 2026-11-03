@@ -3,6 +3,12 @@
 Step 9.1.1 / 9.1.2  `tournament_parents`: tournament selection of two parents.
 Step 9.1.3          `random_cut_points`: three different random cut points.
 Step 9.1.4          `three_point_crossover`: two children from two parents.
+Step 9.2            `select_survivors`: the best members of parents + children.
+
+Ranking: the operators take a function `rank(individual)` that returns a
+sortable key, and a SMALLER key is a BETTER member (see
+`fitness.ranking_key`: feasible members by weight, then infeasible ones by
+CV). The operators do not know what the key is made of.
 
 The DNA of a member is its genes in the order of `ctx.frameSections`
 (the SAP table order read in step 6). Everything here works on plain
@@ -15,18 +21,21 @@ from collections.abc import Callable, Sequence
 
 from src.plugins.auto_design.services.population import Individual
 
+# smaller = better
+Rank = Callable[[Individual], object]
+
 
 def tournament_parents(
     population: Sequence[Individual],
     tournamentSize: int,
     rng: random.Random,
-    score: Callable[[Individual], float],
+    rank: Rank,
 ) -> tuple[Individual, Individual]:
     """Steps 9.1.1 and 9.1.2.
 
     `tournamentSize` DIFFERENT members are drawn at random from the
     population (a member cannot be drawn twice), and the two with the
-    highest `score` are the parents. Ties keep the order of the draw.
+    best (smallest) `rank` are the parents. Ties keep the order of the draw.
     """
 
     if tournamentSize < 2:
@@ -41,25 +50,25 @@ def tournament_parents(
         )
 
     drawn = rng.sample(list(population), tournamentSize)
-    ranked = sorted(drawn, key=score, reverse=True)  # stable sort
+    ranked = sorted(drawn, key=rank)  # stable sort, best first
 
     return ranked[0], ranked[1]
 
 
 def select_survivors(
     pool: Sequence[Individual],
-    score: Callable[[Individual], float],
+    rank: Rank,
     count: int,
 ) -> list[Individual]:
-    """Step 9.2: the `count` members of `pool` with the HIGHEST score,
-    best first. On equal scores the member that comes first in `pool` wins
-    (so put the parents before the children).
+    """Step 9.2: the `count` members of `pool` with the best (smallest)
+    `rank`, best first. On equal ranks the member that comes first in
+    `pool` wins (so put the parents before the children).
     """
 
     if count > len(pool):
         raise ValueError(f"Cannot keep {count} members out of {len(pool)}.")
 
-    return sorted(pool, key=score, reverse=True)[:count]  # stable sort
+    return sorted(pool, key=rank)[:count]  # stable sort
 
 
 def random_cut_points(geneCount: int, rng: random.Random) -> tuple[int, int, int]:

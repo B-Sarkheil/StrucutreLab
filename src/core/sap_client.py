@@ -153,6 +153,30 @@ class SapClient:
             raise SapError("PropFrame.GetNameList failed.")
 
         return [str(name) for name in list(names or [])[: int(count)]]
+    
+    def unlock_model(self) -> None:
+        """Unlock the model so that it can be edited (as in the MATLAB code)."""
+
+        ret = self.model.SetModelIsLocked(False)
+
+        if ret != 0:
+            raise SapError("Could not unlock the SAP2000 model.")
+
+    def assign_frame_section(self, frame: str, section: str) -> None:
+        """Assign a frame section to one frame object."""
+
+        ret = self.model.FrameObj.SetSection(frame, section, self.api.eItemType.Objects)
+
+        if ret != 0:
+            raise SapError(f"Could not assign section '{section}' to frame '{frame}'.")
+
+    def save_model_as(self, sdb_path: str | Path) -> None:
+        """Save the open model under a new path (File.Save, as in runAll.m)."""
+
+        ret = self.model.File.Save(str(sdb_path))
+
+        if ret != 0:
+            raise SapError(f"SAP2000 could not save the model: {sdb_path}")
 
     def read_table(self, table_key: str) -> list[dict[str, str]]:
         """Rows of a SAP2000 database table as displayed: one dict per row,
@@ -182,3 +206,22 @@ class SapClient:
             dict(zip(fields, data[i * width : (i + 1) * width]))
             for i in range(int(count))
         ]
+
+    def run_analysis(self) -> None:
+        if self.model.Analyze.RunAnalysis() != 0:
+            raise SapError("SAP2000 analysis failed.")
+
+    def run_steel_design(self) -> bool:
+        return self.model.DesignSteel.StartDesign() == 0
+
+    def run_concrete_design(self) -> bool:
+        return self.model.DesignConcrete.StartDesign() == 0
+
+    def available_table_keys(self) -> list[str]:
+        # pythonnet returns (ret, NumberTables, TableKey, TableName, ImportType)
+        result = self.model.DatabaseTables.GetAvailableTables(0, None, None, None)
+
+        if not isinstance(result, tuple) or len(result) != 5 or result[0] != 0:
+            raise SapError(f"Unexpected result of GetAvailableTables: {result!r}")
+
+        return [str(k) for k in list(result[2] or [])[: int(result[1])]]

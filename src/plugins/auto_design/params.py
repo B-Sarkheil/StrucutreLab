@@ -5,6 +5,9 @@ same names are used from the form down to the GA code.
 
 The SAP2000 reference file is chosen in step 1 and is kept by the
 wizard (`AutoDesignWizard.sap_path`); it is not part of the GA settings.
+The tolerance used to detect beams / columns / braces belongs to the
+"Frame types" page (step 3), not to the GA settings; the result of that
+page (frame -> role) is kept by the wizard (`AutoDesignWizard.frame_roles`).
 """
 from __future__ import annotations
 
@@ -16,11 +19,10 @@ class AutoDesignParams:
     """Validated values of the GA settings form (last step)."""
 
     popSize: int  # population size, > 0
-    tournamentSize: int  # tournament selection size, > 0
+    tournamentSize: int  # tournament selection size, 2..popSize
     genSize: int  # number of generations, > 0
     mutationPercent: float  # mutation percent, 0..100
     penalizeLevel: float  # penalty coefficient k, > 0
-    tolerance: float  # beam/column detection tolerance (cm), > 0
     updateSeismicLoads: bool = False  # update the seismic loads of every offspring model
     modelsFolder: str = ""  # database folder where the models of every generation are saved
 

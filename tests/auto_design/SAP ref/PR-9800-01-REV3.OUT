@@ -1,0 +1,17 @@
+ SAP2000 v14.2.2 Advanced (Analysis Build 8851/32)                              
+ File: D:\Python Library\Struc...b\tests\auto_design\SAP ref\PR-9800-01-REV3.OUT
+                                                                     
+                                                                       
+
+ D I S P L A C E M E N T   D E G R E E S   O F   F R E E D O M
+
+         (A) = Active DOF, equilibrium equation
+         (-) = Restrained DOF, reaction computed
+         (+) = Constrained DOF
+         (>) = External substructure DOF
+         ( ) = Null DOF
+
+  JOINTS              UX  UY  UZ  RX  RY  RZ
+       2 TO     143    A   A   A   A   A   A
+     187 TO     194    -   -   -   -   -   -
+       1 TO    ~543    A   A   A   A   A   A
