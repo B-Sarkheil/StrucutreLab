@@ -1,4 +1,4 @@
-"""Auto Design - step 8: building blocks of the initial population (no Qt).
+"""Auto Design - steps 3 and 8: frame roles (step 3, used by the Frame types page) and the building blocks of the initial population (step 8) (no Qt).
 
 Frame roles (rule of `classify_frame`), the sections allowed for every
 frame (same material as the reference section, allowed for the frame's

@@ -2,7 +2,7 @@
 
 Integrated engineering desktop software for Windows (Python + PySide6) for about 30 users. It gradually replaces scattered MATLAB and Excel-VBA tools. Each tool is a plugin.
 
-First real tool: **Auto Design**, automatic structural section optimization (Genetic Algorithm + SAP2000 OAPI). Development resumed on 2026-10-27: it is **enabled** (`AUTO_DESIGN_ENABLED = True` in `plugins/registry.py`). Its wizard has three input pages and a live run page; the run executes GA steps 5 to 9 (the generation loop is written; `classify_frame` and `fitness_calculator` are still missing, and step 10 is still to be described; see "Auto Design"). Second tool: **SLD to SAP**, loading the SAP2000 model from piping SLD files exported from AutoCAD.
+First real tool: **Auto Design**, automatic structural section optimization (Genetic Algorithm + SAP2000 OAPI). Development resumed on 2026-10-27: it is **enabled** (`AUTO_DESIGN_ENABLED = True` in `plugins/registry.py`). Its wizard has four input pages (file, sections, frame types, GA settings) and a live run page; the run executes GA steps 5 to 9 with a real `fitness_calculator` (weight W and constraint violation CV, written 2026-11-03; only the stress-ratio constraint exists so far). Step 10 is still to be described (see "Auto Design"). Second tool: **SLD to SAP**, loading the SAP2000 model from piping SLD files exported from AutoCAD.
 
 Design context lives in these docs in the project knowledge:
 
@@ -14,13 +14,13 @@ Design context lives in these docs in the project knowledge:
 
 ### MATLAB references (project knowledge)
 
-The user's tested MATLAB code is the reference for SAP2000 API calls; method signatures in it can be trusted (the user can extract exact signatures from the DLL on request). It belongs to the **Auto CPS** tool (planned, not built in Python), not to Auto Design, but the API patterns apply:
+The user's tested MATLAB code is the reference for SAP2000 API calls; method signatures in it can be trusted (the user can extract exact signatures from the DLL on request; he gave `DesignConcrete.GetSummaryResultsBeam` and `GetSummaryResultsColumn` on 2026-11-03). It belongs to the **Auto CPS** tool (planned, not built in Python), not to Auto Design, but the API patterns apply:
 
 * `connectToSAP.m`, `openSapModel.m` (ported in `core/sap_client.py`).
 * `runAll.m`, `modelingOneLine.m`, `designOneLine.m`: open model, change sections, `File.Save(path)`, `Analyze.RunAnalysis()`, then read results.
 * `modifyProfilesType1.m`: `SetModelIsLocked(false)` then `FrameObj.SetSection(name, section)`.
 * `modifySapModelType1.m`: geometry/loads/mass source/seismic coefficients through the API (`EditPoint`, `PointObj`, `FrameObj.SetLoadDistributed`, `SourceMass`, `AutoSeismic`, `StaticLinear` load cases).
-* `getDesignResultsType1.m` (the function inside is named `getDesignResultsType2`): `DesignSteel.StartDesign()`, `DesignSteel.GetSummaryResults`, `Setup.SetComboSelectedForOutput`, `AnalysisResults.JointDispl`, `JointReact`. Useful when `fitness_calculator` is written.
+* `getDesignResultsType1.m` (the function inside is named `getDesignResultsType2`): `DesignSteel.StartDesign()`, `DesignSteel.GetSummaryResults` (used by `design_results.py`), `Setup.SetComboSelectedForOutput` (selects combos for analysis OUTPUT, needed later for the drift constraint; it is not the design combos), `AnalysisResults.JointDispl`, `JointReact`.
 * `SLD2SAP.m` (v1.4) with `SLD2SAP.lsp`: reference of SLD to SAP.
 
 ## Layout
@@ -46,24 +46,26 @@ StructureLab/
 │       │
 │       ├── auto_design/
 │       │   ├── plugin.py       registers the plugin; create_widget() returns AutoDesignWizard
-│       │   ├── params.py       AutoDesignParams (GA settings, step 3), SectionPermission (step 2 table + materialType from GA step 5)
+│       │   ├── params.py       AutoDesignParams (GA settings, step 4), SectionPermission (step 2 table + materialType from GA step 5)
 │       │   ├── services/       pure logic, no Qt
 │       │   │   ├── sections_excel.py     Excel import / export of the sections table
 │       │   │   ├── sap_tables.py         pick_field(): case-insensitive field of a SAP database-table row
 │       │   │   ├── run_monitor.py        RunMonitor (status / progress / generation reports, cooperative cancel), RunCancelled, GenerationStats
-│       │   │   ├── ga_run.py             GAContext, prepare_database_folder, step5..step9 functions, _make_member, run_ga
+│       │   │   ├── ga_run.py             GAContext, prepare_database_folder, step5..step9 functions, _make_member, _report_generation, run_ga
 │       │   │   ├── section_materials.py  GA step 5: Material Type of every section
 │       │   │   ├── frame_assignments.py  GA step 6: section assigned to every frame
 │       │   │   ├── model_geometry.py     GA step 7: joint coordinates and frame connectivity
-│       │   │   ├── population.py         GA step 8: Individual, frame roles, allowed sections per frame, random genes
-│       │   │   ├── genetic_operators.py  GA step 9: tournament_parents, random_cut_points, three_point_crossover, select_survivors (pure, no SAP)
-│       │   │   ├── fitness.py            fitness_calculator (STUB, returns None), fitness_value (temporary: a number, larger = better)
+│       │   │   ├── population.py         GA step 8: Individual, frame roles (classify_frame), allowed sections per frame, random genes
+│       │   │   ├── genetic_operators.py  GA step 9: tournament_parents, random_cut_points, three_point_crossover, select_survivors (pure, no SAP; ranked by a `rank` key, smaller = better)
+│       │   │   ├── fitness.py            fitness_calculator (W and CV), Fitness, CvWeights, compute_cv, ranking_key
+│       │   │   ├── design_results.py     weight and stress ratios read from SAP2000 after analysis + design
 │       │   │   └── database_folder.py    check / describe / clear the database folder, generation_folder, copy_member_model
 │       │   └── ui/
 │       │       ├── wizard.py             QStackedWidget: moves between the pages, keeps the collected data, owns the run worker thread (_RunWorker)
 │       │       ├── page.py               step 1: SAP2000 reference file (drop zone)
 │       │       ├── sections_page.py      step 2: allowed-sections table
-│       │       ├── ga_settings_page.py   step 3: GA settings form + Simulate Evolution button
+│       │       ├── roles_page.py         step 3: type of every frame (column, beam, horizontal / vertical brace), tolerance, editable table
+│       │       ├── ga_settings_page.py   step 4: GA settings form + Simulate Evolution button
 │       │       ├── run_page.py           live view of the run (progress bar, tiles, chart, status log); no GA logic
 │       │       ├── fields.py             form widgets shared by the pages (Field, FancyCheckBox, parse_int, parse_float, FORM_STYLE)
 │       │       └── icons.py              vector icons drawn in code (evolution_run_icon)
@@ -90,7 +92,7 @@ StructureLab/
 ├── docs/
 ├── tests/
 │    ├── auto_design/
-│    │   ├── test_genetic_operators.py   tournament, cut points, three-point crossover, select_survivors (no SAP, no Qt)
+│    │   ├── test_genetic_operators.py   tournament, cut points, three-point crossover, select_survivors (no SAP, no Qt); written for the old `score` (larger = better): must be updated to `rank` (smaller = better)
 │    │   ├── test_database_folder.py     copy_member_model (temp folder)
 │    │   └── preview_run_page.py         progree page preview
 │    ├── bootstrap/
@@ -152,14 +154,22 @@ A wizard inside the plugin (`ui/wizard.py`, a `QStackedWidget`); the shell knows
 
 ### The steps of the algorithm and what exists
 
-The user described the algorithm to Claude a few steps at a time. The "20 steps" he mentioned (`TOTAL_STEPS = 20` in `ga_run.py`) **count the sub-steps too** (clarified on 2026-11-02): steps 1 to 9 with all their sub-steps are the whole described algorithm, and they are written. A separate **step 10** (typing / grouping of the selected member) still comes; the user will say what to do at the very end. Do not invent steps that the user has not described. In the code, `step5_...` to `step9_...` are the top-level steps; the sub-steps (for example 9.1.3) are numbered in the comments.
+The user described the algorithm to Claude a few steps at a time. The "20 steps" he mentioned (`TOTAL_STEPS = 20` in `ga_run.py`) **count the sub-steps too** (clarified on 2026-11-02): steps 1 to 9 with all their sub-steps are the whole described algorithm, and they are written. A separate **step 10** (typing / grouping of the selected member) still comes; the user will say what to do at the very end. Do not invent steps that the user has not described.
+
+**Numbering rule (agreed with the user on 2026-11-03):**
+
+* Steps **1 to 4 are the four wizard pages**, one step per page: 1 reference file, 2 allowed sections ("Is Allowed" table), 3 frame types, 4 GA settings. The **Simulate Evolution button belongs to step 4** (it confirms the database folder and starts the run); it is not a step of its own.
+* Steps **5 to 9 are the run**, in the code `step5_...` to `step9_...` of `ga_run.py` (5 Material Types, 6 frame sections, 7 geometry, 8 initial population, 9 generation loop). The sub-steps are written with dots (`9.1.3`, `9.2`) in the comments. **Step 10** (typing of the selected member) is not described yet.
+* The frame types (the role of every frame, `classify_frame`) were first a sub-step inside step 8; since 2026-11-03 they are **step 3**, decided once on their own page. Step 8 only reads `ctx.frameRoles`.
+* `TOTAL_STEPS = 20` and `FIRST_RUN_STEP = 5` in `ga_run.py` are only used by the temporary progress estimate (the 20 counts sub-steps, see "Wizard state and the run lifecycle"); they are not the step numbers.
+* Every module and function that belongs to a step names it in its docstring (`step 3`, `step 8`, ...). Keep the numbers in the docstrings, in the log lines (`Step 5 - ...`) and in this table the same.
 
 | Step | What | Where |
 |---|---|---|
 | 1 | SAP2000 reference file | `ui/page.py` |
 | 2 | Allowed sections table | `ui/sections_page.py` |
-| 3 | GA settings | `ui/ga_settings_page.py` |
-| 4 | "Simulate Evolution" button (confirms the database folder, starts the run) | `ga_settings_page.py` + `wizard.py` |
+| 3 | Frame types (column / beam / horizontal brace / vertical brace) → `frameRoles` | `ui/roles_page.py`, `services/population.py` (`classify_frames`) |
+| 4 | GA settings and the "Simulate Evolution" button (confirms the database folder, starts the run) | `ui/ga_settings_page.py` + `wizard.py` |
 | 5 | Material Type of every section → `ctx.sections[i].materialType` | `services/section_materials.py`, `step5_material_types` |
 | 6 | Section assigned to every frame → `ctx.frameSections` (frame → section) | `services/frame_assignments.py`, `step6_frame_sections` |
 | 7 | Joint coordinates and frame connectivity → `ctx.jointCoordinates`, `ctx.frameConnectivity` | `services/model_geometry.py`, `step7_geometry` |
@@ -167,7 +177,7 @@ The user described the algorithm to Claude a few steps at a time. The "20 steps"
 | 9 | Loop of `genSize` generations: 9.1 children by tournament + three-point crossover, 9.2 the best N of the 2N members go to the next generation | `services/genetic_operators.py`, `ga_run.step9_generations` |
 | 10 | Typing of the selected (best) member: **not described yet** (the user will say at the very end) | |
 
-### Wizard pages (steps 1 to 3)
+### Wizard pages (steps 1 to 4)
 
 1. **Step 1 – SAP2000 reference file** (`ui/page.py`, `AutoDesignPage`). A big drop area (`DropZone`): drop a `.sdb` file or click to browse. Only `.sdb` is accepted. The SAP2000 logo is read from `ui/assets/icons/sap.png` (`sap.ico` and `sao.ico` are accepted too); a plain "SAP" lettering is drawn when none exists. Next checks that the file still exists and emits the path (`str`). The path is NOT part of `AutoDesignParams`; the wizard keeps it as `sap_path`.
 2. **Step 2 – allowed sections** (`ui/sections_page.py`). In a worker thread (`_SectionsLoader`): connect to SAP2000 (attach to a running instance, else start one) → open the file → read frame section names (`PropFrame.GetNameList`). Table columns: Section, Is Allowed for Column, Is Allowed for Beam, Is Allowed for Horizontal Brace, Is Allowed for Vertical Brace (`SectionPermission` fields `allowedForColumn`, `allowedForBeam`, `allowedForHorizontalBrace`, `allowedForVerticalBrace`; the role list `ROLES` in `sections_page.py`, `HEADERS` in `sections_excel.py` and `ROLE_FIELDS` in `population.py` must keep the same roles). Each cell toggles No/Yes on click or Space/Enter; default No. Loading shows a progress bar; failure shows the message and a Retry button. Next requires at least one Yes and emits `list[SectionPermission]`. Tools for long section lists (all work on the table data, never on SAP):
@@ -176,25 +186,26 @@ The user described the algorithm to Claude a few steps at a time. The "20 steps"
     * **Undo / Redo** (buttons, Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z). Every click, bulk action and Excel import is one step. History is cleared when the sections are reloaded.
     * **Live counters** under the table (`Allowed: Column n | Beam n | ...`, `Showing x of y`). Counters, Export and Next always use all rows. No warning when a role has zero sections (a user may legitimately not use a role).
     * **Excel export / import** (`services/sections_excel.py`, needs `openpyxl`, imported lazily). Import matches rows by section name; all five header names must exist; Yes/No also accepts y/n/true/false/1/0/x, empty = No; any other value applies nothing and reports the first bad cells; sections not in the model are ignored, sections not in the file stay unchanged. One undo step.
-3. **Step 3 – GA settings** (`ui/ga_settings_page.py`, `GASettingsPage`). Fields (defaults in brackets): `popSize` (100), `tournamentSize` (4), `genSize` (10), `mutationPercent` (0; range 0 to 100), `penalizeLevel` (1), `tolerance` (1, in **cm**: tolerance to detect a member as beam or column); the checkbox `updateSeismicLoads` (off) and `modelsFolder` (database folder for the generation models; default `<folder of the reference file>\SAP Models`, with a Browse button; once the user types or browses, a different reference file no longer changes it). Validation on **Simulate Evolution** (or Enter) with inline errors (`ui/fields.py`); extra rule **`2 <= tournamentSize <= popSize`** (two parents are needed; agreed on 2026-11-02, the UI check must be applied in `ga_settings_page.py` together with the placeholder "Integer, 2 or more"; the algorithm also raises its own error as a second guard); the folder text must not be empty or a file. The run button uses `ui/assets/icons/Run-Genetic.png` (falls back to `evolution_run_icon`). The page is created once, so typed values survive Back / Next. It emits `run_requested(AutoDesignParams)`.
+3. **Step 3 – frame types** (`ui/roles_page.py`, `FrameRolesPage`). The role of every frame is decided ONCE here, for the reference model, and the whole run uses it (the GA never classifies again). In a worker thread (`_GeometryLoader`) the page opens the reference file with the shared `SapClient` of step 2 and reads the frame sections, the connectivity and the joint coordinates. `classify_frames` (`services/population.py`, rule in `classify_frame`) classifies with the tolerance typed on this page (cm, default 1; coordinates are in meters, Z is vertical): all three coordinate differences small → error (zero length); dx and dy small → column; dz small and dx or dy small → beam; dz small and dx, dy big → horizontal brace; otherwise vertical brace. The table shows Frame, ΔX, ΔY, ΔZ and Type; Type is a combo box (click to change; changed rows are marked "edited"). Filter by frame name (same wildcard rule as step 2) and by type, counters per type, **Classify** applies a new tolerance (asks first when the user has edited types, because those are lost; the table blinks green and the button shows "Done"). Next is refused while the tolerance was changed and not applied; it emits `dict frame -> role`. The wizard creates this page once per reference file, so the edited types survive Back / Next; a different file drops it.
+4. **Step 4 – GA settings** (`ui/ga_settings_page.py`, `GASettingsPage`). Fields (defaults in brackets): `popSize` (100), `tournamentSize` (4), `genSize` (10), `mutationPercent` (0; range 0 to 100), `penalizeLevel` (1); the checkbox `updateSeismicLoads` (off) and `modelsFolder` (database folder for the generation models; default `<folder of the reference file>\SAP Models`, with a Browse button; once the user types or browses, a different reference file no longer changes it). The tolerance of beam / column is **not** here any more (it belongs to step 3). Validation on **Simulate Evolution** (or Enter) with inline errors (`ui/fields.py`); extra rule **`2 <= tournamentSize <= popSize`** (two parents are needed; agreed on 2026-11-02, the algorithm also raises its own error as a second guard); the folder text must not be empty or a file. The run button uses `ui/assets/icons/Run-Genetic.png` (falls back to `evolution_run_icon`). The page is created once, so typed values survive Back / Next. It emits `run_requested(AutoDesignParams)`.
 
-`AutoDesignParams` (frozen): `popSize, tournamentSize, genSize, mutationPercent, penalizeLevel, tolerance, updateSeismicLoads, modelsFolder`. Used by the GA: `popSize`, `tournamentSize`, `genSize` (number of iterations of step 9, also the chart range of the run page), `modelsFolder`, `tolerance` (for `classify_frame`, not written yet). **Not used by the GA yet:** `mutationPercent`, `penalizeLevel`, `updateSeismicLoads`.
+`AutoDesignParams` (frozen): `popSize, tournamentSize, genSize, mutationPercent, penalizeLevel, updateSeismicLoads, modelsFolder`. Used by the GA: `popSize`, `tournamentSize`, `genSize` (number of iterations of step 9, also the chart range of the run page), `modelsFolder`. **Not used by the GA yet:** `mutationPercent`, `penalizeLevel`, `updateSeismicLoads`. The CV weights (`CvWeights`, both 1 now) and the feasibility epsilon (`CV_EPSILON`, 1e-6) are constants in `fitness.py`; a field for them in the GA settings is planned.
 
 ### Wizard state and the run lifecycle (`ui/wizard.py`)
 
-* State: `sap_path`, `sections`, `params`, `sap` (the live `SapClient`, taken from the sections page), `context` (the last finished run), `_run_context`, `_run_worker`. Going Back and Next with the **same** `sap_path` reuses the loaded step 2 page; a **different** `sap_path` rebuilds it and clears `sections` and `sap`.
+* State: `sap_path`, `sections`, `frame_roles` (from step 3), `params`, `sap` (the live `SapClient`, taken from the sections page), `context` (the last finished run), `_run_context`, `_run_worker`. Going Back and Next with the **same** `sap_path` reuses the loaded step 2 page and the step 3 page; a **different** `sap_path` rebuilds step 2, clears `sections` and `sap`, and drops the frame types page.
 * **Simulate Evolution** → `_on_params_accepted` → `_confirm_database_folder`: `check_folder_usable` (refuses a drive root, the user's home folder, a file, or a folder that contains the reference file) and, when the folder is not empty, a Yes/No warning (default No) that **everything inside will be permanently deleted** → `_start_run`.
-* `_start_run` creates `GAContext(sap, params, sections, sapPath)` and a `_RunWorker` (a `QThread`), connects its signals (`status`, `progress`, `generation`, `succeeded`, `failed`, `cancelled`) to the run page and shows `RunPage`.
+* `_start_run` creates `GAContext(sap, params, sections, sapPath, frameRoles)` and a `_RunWorker` (a `QThread`), connects its signals (`status`, `progress`, `generation`, `succeeded`, `failed`, `cancelled`) to the run page and shows `RunPage`.
 * The worker calls `run_ga(ctx)`. `RunCancelled` → `cancelled`; any other exception → `failed(message)`; else `succeeded(ctx)`: the wizard keeps `context` and `sections` (now with `materialType`).
 * **Cancel** is cooperative (`services/run_monitor.py`): `RunMonitor.cancel()` sets a flag; `monitor.status(...)` is a checkpoint that raises `RunCancelled` (step 9.2 also calls `raise_if_cancelled()` between the copies); a SAP2000 call already running cannot be interrupted. The run page confirms Cancel with a dialog and allows Back only after the run stopped.
 * **Progress** is a temporary estimate: finished steps out of the steps from `FIRST_RUN_STEP` to `TOTAL_STEPS` (16), reported by `run_ga` after each step; `prepare_database_folder` is not counted. It does not match the real work any more (the 5 built steps give 5/16 = 31 % when step 9, the longest, finishes; the "20 steps" count sub-steps, see above), so **it must be replaced** (for example by the finished members out of all members of the whole run). The run page sets 100 % on `FINISHED`.
-* **Run page** (`ui/run_page.py`, pure display, no SAP and no GA logic): state chip (Running / Cancelling / Cancelled / Finished / Failed), elapsed time, animated progress bar, four tiles (generation, best weight, change in weight, mean DCR), the evolution chart (switch buttons follow the list `METRICS`; to add an objective add a `MetricSpec` and the value in `GenerationStats`), and the status log (one line per `monitor.status`, newest at the bottom). It is fed by `start`, `add_status`, `set_progress`, `add_generation`, `set_state`. **`monitor.generation(GenerationStats)` is never called yet** (the weight and DCR come from `fitness_calculator`, which is not written), so the tiles and chart stay empty. `GenerationStats`: `generation` (0 = initial population), `bestWeight`, `meanWeight`, `meanRatio`, `maxRatio`.
+* **Run page** (`ui/run_page.py`, pure display, no SAP and no GA logic): state chip (Running / Cancelling / Cancelled / Finished / Failed), elapsed time, animated progress bar, four tiles (generation, best weight, change in weight, mean DCR), the evolution chart (switch buttons follow the list `METRICS`; to add an objective add a `MetricSpec` and the value in `GenerationStats`), and the status log (one line per `monitor.status`, newest at the bottom). It is fed by `start`, `add_status`, `set_progress`, `add_generation`, `set_state`. `ga_run._report_generation` calls `monitor.generation(GenerationStats)` for generation 0 (the initial population, end of step 8) and after every iteration of step 9 (generation g = the population after iteration g). `GenerationStats`: `generation`, `bestWeight` (weight of the best member by the GA ranking, kg), `meanWeight` (mean over the population), `meanRatio` and `maxRatio` (mean and largest governing stress ratio of the best member's frames). CV is not shown on the page yet.
 
 ### Run data (`GAContext`, `services/ga_run.py`)
 
-`sap`, `params`, `sections`, `sapPath` (reference file, the original is never modified), `frameSections`, `jointCoordinates` (m), `frameConnectivity` (frame → (jointI, jointJ)), `population: list[Individual]` (the current generation; after the run it is the **final** generation, best member first), `offspring: list[Individual]` (children of the current iteration of step 9), `generation` (number of the generation held in `population`), `rng` (`random.Random()`, **unseeded** for now; add a seed setting if repeatable runs are needed), `monitor`. `Individual` (`population.py`): `name` (e.g. `Gen-1-3`), `path` (its `.sdb`), `genes` (frame → section), `fitness` (whatever `fitness_calculator` returns; `None` for now).
+`sap`, `params`, `sections`, `sapPath` (reference file, the original is never modified), `frameRoles` (frame → role, from step 3), `frameSections`, `jointCoordinates` (m), `frameConnectivity` (frame → (jointI, jointJ)), `population: list[Individual]` (the current generation; after the run it is the **final** generation, best member first), `offspring: list[Individual]` (children of the current iteration of step 9), `generation` (number of the generation held in `population`), `rng` (`random.Random()`, **unseeded** for now; add a seed setting if repeatable runs are needed), `monitor`. `Individual` (`population.py`): `name` (e.g. `Gen-1-3`), `path` (its `.sdb`), `genes` (frame → section), `fitness` (a `Fitness` object returned by `fitness_calculator`).
 
-Read-only table access: `SapClient.read_table(key)` returns rows of a SAP database table as dicts (field → text); the table names used are in `section_materials.py` (`Frame Section Properties 01 - General`, `Material Properties 01 - General`), `frame_assignments.py` (`Frame Section Assignments`, field `AnalSect`) and `model_geometry.py` (`Joint Coordinates`, `Connectivity - Frame`). The model is read in N-m-C units (`open_model` sets them).
+Read-only table access: `SapClient.read_table(key)` returns rows of a SAP database table as dicts (field → text); the table names used are in `section_materials.py` (`Frame Section Properties 01 - General`, `Material Properties 01 - General`), `frame_assignments.py` (`Frame Section Assignments`, field `AnalSect`), `model_geometry.py` (`Joint Coordinates`, `Connectivity - Frame`) and `design_results.py` (`Material List 1 - By Object Type`, field `TotalWeight`). The model is read in **kgf-m-C** units (`open_model` sets them since 2026-11-03; before it was N-m-C), so weights are in kg and lengths in meters.
 
 ### Run start: database folder (`prepare_database_folder`, `services/database_folder.py`)
 
@@ -211,23 +222,42 @@ At the start of `run_ga` (before step 5) the run re-checks the folder, **opens t
   <modelsFolder>\Generation-1\Gen-1-(N+1) ... Gen-1-2N  children of iteration g = 1 (step 9.1)
   <modelsFolder>\Generation-2\Gen-2-1\Gen-2-1.sdb       the best N of the 2N (step 9.2) ... up to Gen-2-N
   ```
-* **Gene = one frame** (not a section group). Genes are independent; the same section may appear in many genes. A random section for a frame is chosen from the sections that have **the same Material Type as the frame's reference section** and are **allowed for the frame's role** (column, beam, horizontalBrace, verticalBrace). The options are computed once before any folder is made (`build_gene_options`); a frame with no Material Type or no allowed section stops the run at the start with all problems listed together.
+* **Gene = one frame** (not a section group). Genes are independent; the same section may appear in many genes. A random section for a frame is chosen from the sections that have **the same Material Type as the frame's reference section** and are **allowed for the frame's role** (column, beam, horizontalBrace, verticalBrace; the role comes from `ctx.frameRoles`, step 3). The options are computed once before any folder is made (`build_gene_options`); a frame with no Material Type, no role or no allowed section stops the run at the start with all problems listed together.
 * Member i is built by `ga_run._make_member` (shared with step 9): open the reference model, `unlock_model`, assign the new section only to frames whose section differs from the reference, `save_model_as` the member's path, then `fitness_calculator(sap, path)`. The reference model is reopened every time (clean start, no old results). The reference member itself is evaluated too, on its **copy** `Gen-1-1.sdb`.
-* **`classify_frame` is not written** (raises `NotImplementedError`): the user has not yet described the rule (beam / column / horizontal brace / vertical brace from the joint coordinates and the tolerance in cm). Until then the run stops in step 8 before any member folder is made.
-* **`fitness_calculator` (`services/fitness.py`) is a stub** returning `None`: input is a SAP file (the open model), output the optimization objectives; the user will describe it later (weight, DCR from steel design, drift, deflection; see the project plan; the MATLAB `getDesignResultsType1.m` shows the design-results calls).
 
-### Step 9: generation loop (decided with the user, written, not run on SAP2000)
+### Fitness: weight W and constraint violation CV (`services/fitness.py`, `services/design_results.py`; written 2026-11-03, first run on a real SAP2000 worked)
+
+`fitness_calculator(sap, path)` works on the open (already saved) model and returns a `Fitness` (`weight`, `cv`, `elementViolation`, `globalViolations`, `meanRatio`, `maxRatio`, `elementCount`):
+
+1. `run_analysis()` (an error stops the run), `run_steel_design()`, `run_concrete_design()` (a non-zero code only gives a log warning). The **design combinations of the file are never touched**: whatever the user selected as Design Combos is used.
+2. **W** = sum of the column `TotalWeight` of the table `Material List 1 - By Object Type` (kg). The table has no total row (confirmed by the user).
+3. **Stress ratio of every frame** (API calls with item type Group and name `ALL`, so the design code name never matters): steel `DesignSteel.GetSummaryResults` (`Ratio`); concrete columns `DesignConcrete.GetSummaryResultsColumn` (`PMMRatio`); concrete beams `DesignConcrete.GetSummaryResultsBeam` (no DCR exists: a beam with an error message gets the fixed ratio `ERROR_RATIO = 1.5`, strict on purpose, otherwise 0). A steel frame or concrete column with an error message gets at least 1.5 too. If no frame was designed at all the run stops with a clear error. A call that returns a non-zero code (for example no beams in the model) counts as nothing of that kind (log warning).
+4. The model is saved again at the end, so the `.sdb` that is copied to the next generation keeps the analysis and design results.
+
+CV formula (general form; only the element term exists now):
+
+```text
+r_i_gov = max_k r_ik                      governing ratio of element i (max over all element constraints)
+v_e     = mean_i max(0, r_i_gov - 1)      element constraints (stress now, beam deflection later)
+v_d     = mean_j max(0, r_j_drift - 1)    global constraints (drift later)
+CV      = w_e * v_e + w_d * v_d (+ ...)   w_e = w_d = 1 for now (CvWeights)
+```
+
+To add a constraint: an element constraint is a reader `f(sap) -> {frame: ratio}` added to `ELEMENT_CONSTRAINTS`; a global constraint is a reader `f(sap) -> [ratio, ...]` added to `GLOBAL_CONSTRAINTS` under a name, with its weight in `CvWeights.globalWeights`. Drift will need `Setup.SetComboSelectedForOutput` (combos for analysis output); that must still be discussed with the user because it touches the output selection of the file.
+
+**Ranking** (`ranking_key`): a member with `CV <= CV_EPSILON` (1e-6) is feasible. Feasible members come first ordered by W (smaller is better), then the infeasible ones ordered by CV (smaller is better). The key is `(0, W)` or `(1, CV)`; a **smaller key is a better member**. The operators in `genetic_operators.py` take a function `rank(individual)` and sort ascending; the same rule is used by the tournament (the best two of the drawn members) and by step 9.2 (the best N of the 2N). The old `fitness_value` (one number, larger is better) was removed.
+
+### Step 9: generation loop (decided with the user, written)
 
 Loop `g = 1 .. genSize`. Pure operators are in `services/genetic_operators.py` (no SAP), the loop is `ga_run.step9_generations`. The DNA of a member is its genes in the order of `ctx.frameSections` (SAP table order).
 
 * **9.1** Loop `m = 1 .. N/2` (`0.5*(popSize + mod(popSize,2))` pairs). Per pair:
-    * 9.1.1 / 9.1.2 **Tournament** (`tournament_parents`): `tournamentSize` **different** members are drawn at random from the population; the two with the highest fitness are the parents (ties: the first drawn). `tournamentSize` must be at least 2 (and at most the population size).
+    * 9.1.1 / 9.1.2 **Tournament** (`tournament_parents`): `tournamentSize` **different** members are drawn at random from the population; the two with the best rank are the parents (ties: the first drawn). `tournamentSize` must be at least 2 (and at most the population size).
     * 9.1.3 **Cut points** (`random_cut_points`): three different random numbers between 1 and the number of genes (frames), sorted. Cut `c` means genes `1..c` stay before the cut. If `c3` equals the number of genes the fourth part is empty and the crossover is in fact two-point; this is allowed and does not fail. At least 3 genes are required (clear error otherwise).
     * 9.1.4 **Three-point crossover** (`three_point_crossover`): both parents are cut into four parts and parts 2 and 4 are exchanged: child 1 = `A1 B2 A3 B4`, child 2 = `B1 A2 B3 A4`.
     * 9.1.5 Both children are built and evaluated with `_make_member` **inside Generation-g**, next to their parents, as members `N+1 .. 2N` (`Gen-g-(N+1)` ... `Gen-g-2N`), so `Generation-g` holds 2N members.
-* **9.2** (`_step9_2_next_generation`) The N members with the highest fitness among the 2N (parents first, so a parent wins a tie) are **copied** to `Generation-(g+1)` as `Gen-(g+1)-1 ... Gen-(g+1)-N`, best first, and become `ctx.population` for the next iteration (genes and fitness are carried over, nothing is re-evaluated). **Only the `.sdb` is copied** (`database_folder.copy_member_model`; it keeps the analysis results), the originals stay in `Generation-g`. Before copying, the reference model is reopened so SAP2000 does not lock the last evaluated file. There is **no Dominated folder** (an idea dropped on 2026-11-02).
+* **9.2** (`_step9_2_next_generation`) The N best members (by `ranking_key`) among the 2N (parents first, so a parent wins a tie) are **copied** to `Generation-(g+1)` as `Gen-(g+1)-1 ... Gen-(g+1)-N`, best first, and become `ctx.population` for the next iteration (genes and fitness are carried over, nothing is re-evaluated). **Only the `.sdb` is copied** (`database_folder.copy_member_model`; it keeps the analysis and design results), the originals stay in `Generation-g`. Before copying, the reference model is reopened so SAP2000 does not lock the last evaluated file. There is **no Dominated folder** (an idea dropped on 2026-11-02). After 9.2, `_report_generation(ctx, g)` feeds the run page.
 * After the last iteration `Generation-(genSize+1)` holds the final population and `ctx.population[0]` is the best member (step 10 will work on it).
-* **`fitness_value` (`services/fitness.py`) is temporary:** it accepts only a plain number and a larger value is better; it raises a clear error for `None`. When `fitness_calculator` is described (several objectives, penalty), the rule that makes one number from its result goes there.
 * Disk: every generation keeps all its member folders with the files SAP2000 wrote while running; the size grows with `genSize * popSize`.
 
 ### SAP2000 connection decisions (`core/sap_client.py`)
@@ -237,21 +267,23 @@ Loop `g = 1 .. genSize`. Pure operators are in `services/genetic_operators.py` (
 * The DLL ships inside the app update package; running it from `%LocalAppData%` is not a problem (confirmed by the user). `build.py` zips every file under `src/`, so the DLL is included; `.gitignore` must not exclude it.
 * `openSapModel.m` also deletes non-`.sdb` files in the model folder; this was **deliberately not ported**.
 * The SAP2000 imports are lazy, so the app starts even if `pythonnet` is missing.
-* Methods: `connect`, `open_model` (OpenFile + N-m-C), `frame_section_names`, `read_table`, and since GA step 8: `unlock_model` (`SetModelIsLocked(False)`), `assign_frame_section` (`FrameObj.SetSection(frame, section, eItemType.Objects)`), `save_model_as` (`File.Save(path)`, as in `runAll.m`). Python binding of `ref` / `out` parameters returns tuples (`read_table`, `frame_section_names`, `_check_version`).
-* **Verified by the user on a real SAP2000 v23 (2026-10-27):** connecting (attach or start), opening the model, `PropFrame.GetNameList` and the version check, with the calls running in a `QThread`.
+* Methods: `connect`, `open_model` (OpenFile + **kgf-m-C**, changed from N-m-C on 2026-11-03 so the weight is in kg), `frame_section_names`, `read_table`, since GA step 8: `unlock_model` (`SetModelIsLocked(False)`), `assign_frame_section` (`FrameObj.SetSection(frame, section, eItemType.Objects)`), `save_model_as` (`File.Save(path)`, as in `runAll.m`), and since the fitness: `run_analysis` (`Analyze.RunAnalysis()`, an error raises `SapError`), `run_steel_design` and `run_concrete_design` (`DesignSteel.StartDesign()` / `DesignConcrete.StartDesign()`, return True when the code is 0). `design_results.py` calls `client.model.DesignSteel` / `DesignConcrete` summary functions directly. Python binding of `ref` / `out` parameters returns tuples (`read_table`, `frame_section_names`, `_check_version`, the summary calls).
+* **Verified by the user on a real SAP2000 v23 (2026-10-27):** connecting (attach or start), opening the model, `PropFrame.GetNameList` and the version check, with the calls running in a `QThread`. **2026-11-03:** a full run from the app worked (no crash outside the debugger).
 
 ### Unverified (Auto Design)
 
-Written without running on a real SAP2000; check these first when the user reports a problem:
+Check these first when the user reports a problem:
 
-* `read_table` (`GetTableForDisplayArray` binding) and steps 5 to 7: the table and field names (`SectionName`, `Material`, `Type`, `Frame`, `AnalSect`, `Joint`, `GlobalX/Y/Z`, `JointI`, `JointJ`) come from the user's knowledge of SAP2000 database tables; the README of 2026-10-27 only recorded steps 1 to 3 as verified.
-* The new `SapClient` methods of step 8 (`SetSection` with the `eItemType` argument, `File.Save(path)` as Save As).
-* **Step 9 never ran** (it needs `classify_frame` and `fitness_calculator` first): the whole loop, the copy of the `.sdb` after reopening the reference model (a possible file lock on Windows), the status lines, and the time of a generation with real models.
-* The same `SapClient`, created in the sections page's thread, is used from the run worker thread (a different `QThread`); COM/.NET apartment problems would show up as errors at the first SAP call of the run.
-* The run page and its worker were not seen running on a display.
+* The numbers of the first real run have not been reviewed: the lines `Steel: ...`, `Concrete columns: ...`, `Concrete beams: ...` and `Fitness Gen-...: W=..., CV=...` of `app.log`, and the run page tiles and chart (weight in kg, ratios).
+* The `None` arguments for the output arrays of `GetSummaryResults`, `GetSummaryResultsColumn` and `GetSummaryResultsBeam` (item type Group, name `ALL`), the assumption of one row per frame (the max is kept anyway), and the way SAP2000 reports "nothing of this kind" (code or empty result). Error messages: values `No Message`, empty, `None`, `N/A`, `-` count as "no error".
+* `read_table` (`GetTableForDisplayArray` binding) and steps 5 to 7: the table and field names (`SectionName`, `Material`, `Type`, `Frame`, `AnalSect`, `Joint`, `GlobalX/Y/Z`, `JointI`, `JointJ`) come from the user's knowledge of SAP2000 database tables.
+* The `SapClient` methods of step 8 (`SetSection` with the `eItemType` argument, `File.Save(path)` as Save As) and of the fitness (`RunAnalysis`, `StartDesign`).
+* The design runs with the Design Combos the user selected in the reference file; a model with no selected design combos was not tried.
+* The generation loop with real models: the copy of the `.sdb` after reopening the reference model (a possible file lock on Windows), and the time of a generation.
+* The same `SapClient`, created in the sections page's thread, is used from the loader thread of step 3 and from the run worker thread (different `QThread`s); COM/.NET apartment problems would show up as errors at the first SAP call. It worked in the 2026-11-03 run.
+* Running the app under the VSCode debugger (F5) printed `QBackingStore::endPaint() called with active painter` and crashed once the run was going; without debugger (`python -X faulthandler -m src`) it works. Cause not proven (debugger stops on exceptions in a `paintEvent` or in a Qt/COM thread are suspected); it was solved by the debug settings (see Development).
 * `shutil.rmtree(onexc=...)` needs Python 3.12 (the runtime is 3.12.10).
-* Automated tests exist only for the pure parts of step 9 (`tests/auto_design/test_genetic_operators.py`, `test_database_folder.py`), run on Linux with a stand-in `Individual`; run them once with the project runtime. Steps 5 to 8 have no tests.
-* The UI check `tournamentSize >= 2` in `ga_settings_page.py` was given as a snippet (the file was not available to edit): make sure it was applied.
+* Automated tests exist only for the pure parts of step 9 (`tests/auto_design/test_genetic_operators.py`, `test_database_folder.py`), which have not been run with the project runtime, and `test_genetic_operators.py` still uses the old `score`. There are no tests of `fitness.py` (the user prefers to test in the app). Steps 5 to 8 have no tests.
 
 ## SLD to SAP (current state)
 
@@ -288,25 +320,25 @@ Converts the piping SLD (CSV files written by `SLD2SAP.lsp` from the AutoCAD lay
 * The version number lives in `src/version.py` only (plus `pyproject.toml`, checked by `build.py`). It is always the value written in the project files, unless the user explicitly says otherwise. Do not type it anywhere else. Every release gets an entry in `src/release_notes.json` (for users) and in the change log below (for developers). Dates already written in the change log are never changed.
 * Create planned files only when they are actually implemented. Every package folder needs an `__init__.py`, otherwise `pyproject.toml` (`packages.find include = ["src*"]`) skips it.
 * Always use the project runtime; `python` / `py` may not exist globally.
-* Tests of a plugin live in `tests/<plugin name>/`; tests of shell services in `tests/core/`; tests of the launcher in `tests/bootstrap/`.
+* Tests of a plugin live in `tests/<plugin name>/`; tests of shell services in `tests/core/`; tests of the launcher in `tests/bootstrap/`. The user prefers to test Auto Design in the app himself and give feedback: do not write new tests unless he asks.
 * **Working with Claude (project instructions):** after changing any code, state which file changed and its exact folder location. If a project file that is needed is not among the provided references (for example `home_page.py`, `main_window.py`, `widgets.py`, `registry.py`), say so before guessing. Say clearly what was written but not run.
-* Auto Design: the GA only talks to the SAP model through small functions (`fitness_calculator`, `SapClient` methods) so the engine can be replaced later (surrogate); every evaluation should end up stored (see the project plan, `core/storage.py` is a stub); the reference file chosen by the user is never modified or saved.
+* Auto Design: the GA only talks to the SAP model through small functions (`fitness_calculator`, `SapClient` methods) so the engine can be replaced later (surrogate); every evaluation should end up stored (see the project plan, `core/storage.py` is a stub); the reference file chosen by the user is never modified or saved; the Design Combos of the user's file are never changed.
 
 ## Development
 
 * Windows, VSCode, project Python: `D:\Python Library\StructureLab\runtime\python\python.exe`.
-* Run (or F5 with the "Structure Lab" launch config, module `src`): `.\runtime\python\python.exe -m src` (works because the dev `python312._pth` contains `..\..`; do not copy this file into a release).
+* Run (or F5 with the "Structure Lab" launch config, module `src`): `.\runtime\python\python.exe -m src` (works because the dev `python312._pth` contains `..\..`; do not copy this file into a release). F5 with debugpy once crashed the run page (`QBackingStore::endPaint() called with active painter`); it was solved by the debug settings: in `.vscode/launch.json` use `"justMyCode": true` and `"subProcess": false`, and in the Breakpoints panel untick "Raised Exceptions" and "Uncaught Exceptions" and remove forgotten breakpoints. `Ctrl+F5` (run without debugging) avoids the problem. To get a stack on a native crash: `.\runtime\python\python.exe -X faulthandler -m src`.
 * Install deps: `.\runtime\python\python.exe -m pip install -r .\runtime\requirements.txt`
 * Dev tools (installed in the dev runtime only; they are in `DEV_ONLY` of `build.py`, so they never reach users and do not change the runtime id; do not add them to `runtime/requirements.txt`): `.\runtime\python\python.exe -m pip install pytest pytest-qt ruff` (behind the company proxy add `--proxy http://kerio:3128`).
 * Tests / lint: `.\runtime\python\python.exe -m pytest` (one folder: `.\runtime\python\python.exe -m pytest tests\sld_to_sap`, `tests\auto_design`, `tests\core`, `tests\bootstrap`) and `.\runtime\python\python.exe -m ruff check .`
 * To see the "What's new" window without a release: write `{"last_seen_version": "1.1.5"}` into `user_state.json` in the data folder (normally `%LocalAppData%\Structure Lab`) and start the app.
 * To see the update window alone: call `ask_update(<request.json>)` from `src.__main__` with a file `{"current": "1.1.5", "new": "1.2.1", "mandatory": false, "notes": [...]}` (it prints the answer on stdout).
-* Auto Design logs go to `app.log` (`Step 5 ...`, `Step 8 - initial population ...`, `Step 9.1 - g=.. m=..: parents .. x .., cuts ..`, `Step 9.2 - ...`, `Status: ...`); a failed run also shows its message on the run page.
+* Auto Design logs go to `app.log` (`Step 5 ...`, `Step 8 - initial population ...`, `Step 9.1 - g=.. m=..: parents .. x .., cuts ..`, `Step 9.2 - ...`, `Steel: ...`, `Concrete columns: ...`, `Concrete beams: ...`, `Fitness Gen-..: W=.., CV=.., max ratio ..`, `Status: ...`); a failed run also shows its message on the run page.
 * Release: see "Release and update system" above (`tools\build.py`, `tools\publish.py`; Inno Setup 6/7 only on the build PC, e.g. `C:\Users\b.sarkheil\AppData\Local\Programs\Inno Setup 7\ISCC.exe`).
 
 ## Status
 
-Done: project structure, embedded runtime, VSCode debugging, dark-themed shell (title bar, sidebar, Home), plugin registry, page switching, **Auto Design**: wizard steps 1 to 3 (confirmed by the user on a real SAP2000 v23), the live run page with cooperative cancel, the run worker thread, the database-folder check/clear with the user warning, GA steps 5 to 9 written (steps 5 to 7 read the model through database tables; step 8 builds the initial population; step 9 is the generation loop with tournament selection, three-point crossover and the copy of the best N to the next generation) with `classify_frame` and `fitness_calculator` still missing and step 10 not described yet; SLD to SAP services (complete algorithm, tested on the guide's examples) and its single-page UI with automatic, collected error checking; about page; loading overlay; the full release system (installer, launcher with auto-update from the server share, build and publish tools). Version 1.1.5 was the first release; 1.1.6 is published and adds the release notes window, the update question with a mandatory mode (launcher 1.1.0, needs a new Setup) and the SLD to SAP check changes; `version.py` shows 1.2.1 (Auto Design development, not released yet).
+Done: project structure, embedded runtime, VSCode debugging, dark-themed shell (title bar, sidebar, Home), plugin registry, page switching, **Auto Design**: wizard steps 1 to 4 (file, sections, frame types, GA settings; steps 1 to 3 of the first version confirmed by the user on a real SAP2000 v23), the live run page with cooperative cancel, the run worker thread, the database-folder check/clear with the user warning, GA steps 5 to 9 written (steps 5 to 7 read the model through database tables; step 8 builds the initial population; step 9 is the generation loop with tournament selection, three-point crossover and the copy of the best N to the next generation), `fitness_calculator` with W and CV (stress ratio only) and the feasible / infeasible ranking, the generation numbers on the run page; a first full run on a real SAP2000 worked (2026-11-03). Step 10 is not described yet. SLD to SAP services (complete algorithm, tested on the guide's examples) and its single-page UI with automatic, collected error checking; about page; loading overlay; the full release system (installer, launcher with auto-update from the server share, build and publish tools). Version 1.1.5 was the first release; 1.1.6 is published and adds the release notes window, the update question with a mandatory mode (launcher 1.1.0, needs a new Setup) and the SLD to SAP check changes; `version.py` shows 1.2.1 (Auto Design development, not released yet).
 
 Known technical issues to fix next:
 
@@ -318,15 +350,15 @@ Known technical issues to fix next:
 * Dependencies are listed in both `pyproject.toml` and `runtime/requirements.txt`. Dev packages are left out of the release runtime by `tools/build.py` (names listed in `DEV_ONLY`), but a cleaner fix is a separate dev requirements file.
 * The sidebar and Home now use PNG icons; the only text-glyph fallback left is `◈` in `TitleBar` when `logo4.ico` is missing.
 * Step 2 does not stop its worker thread if the app closes while loading; the run worker is not stopped either when the window closes during a run.
-* Auto Design tests: only the pure parts of step 9 are covered. Still easy to cover in `tests/auto_design/`: `compile_name_filter` (in `sections_page.py`), `services/sections_excel.py`, the parsing helpers in `ui/fields.py`, `build_gene_options`, `random_genes`, `clear_folder` / `check_folder_usable` (use a temp folder), `RunMonitor`.
+* Auto Design tests: `test_genetic_operators.py` must be updated to the `rank` key (smaller = better).
 * The progress estimate of the run page does not match the real work (see "Wizard state and the run lifecycle").
 * SLD to SAP runs its checks in a background worker; re-check on a large model.
 * A mandatory update is decided by the newest version on the server only (see the release steps).
 
 ## Next session
 
-1. **Auto Design:** the user will describe `classify_frame` (step 8.2.1.1: role of a frame from joint coordinates, `frameConnectivity` and `tolerance` in cm; coordinates are in meters), then `fitness_calculator` (then replace the temporary `fitness_value`), then **step 10** (typing of the selected member, `ctx.population[0]` after the run; the user will say at the very end what to do). Wire `monitor.generation(GenerationStats)` once the fitness has weight and DCR; replace the temporary progress estimate; use or drop the unused settings (`updateSeismicLoads`, `penalizeLevel`, `mutationPercent`). Apply the `tournamentSize >= 2` check in `ga_settings_page.py` if it is not applied yet.
-2. Run Auto Design on the real SAP2000 v23 and report what fails (see "Unverified (Auto Design)"). Until `classify_frame` is written the run stops in step 8 with `NotImplementedError`.
+1. **Auto Design:** review the numbers of the first real run (see "Unverified (Auto Design)"). Then, in the order the user decides: the beam deflection constraint (element constraint, a reader added to `ELEMENT_CONSTRAINTS`), the drift constraint (global constraint; needs the joint of the drift check and the output combos, see the note in "Fitness"), a field in the GA settings for the CV weights `w_e`, `w_d` (and maybe the epsilon), then **step 10** (typing of the selected member, `ctx.population[0]` after the run; the user will say at the very end what to do). Replace the temporary progress estimate; use or drop the unused settings (`updateSeismicLoads`, `penalizeLevel`, `mutationPercent`); show CV on the run page (a `MetricSpec`).
+2. Update `tests/auto_design/test_genetic_operators.py` to the `rank` key when the user sends the file.
 3. Check `pythonnet` in `pyproject.toml` and remove the duplicate `openpyxl` line in `runtime/requirements.txt`.
 4. Look at the two new windows (What's new, Update available; both modes) and fix whatever the display shows (see "Unverified (release system)").
 5. Build a new Setup (launcher 1.1.0, `min_bootstrap_version` 1.1.0) with `build.py --installer`, install it on the user's PC, then release the next version with `build.py` + `publish.py` (add an entry to `src/release_notes.json` first) and check on a user PC that the question appears at the next launch and the update works (`logs\launcher.log`). Try a mandatory release (`--mandatory`) and one runtime change (new library).
@@ -339,11 +371,11 @@ Known technical issues to fix next:
 ## Change log
 * [1.2.1] - (2026-11-??):
     - Auto Design development resumed: `AUTO_DESIGN_ENABLED` set to `True` in `plugins/registry.py` (Auto Design is a normal tool again on Home and in the sidebar)
-    - Auto Design wizard: step 1 SAP2000 file drop area (`ui/page.py`), step 2 sections table (`ui/sections_page.py`), step 3 GA settings (new `ui/ga_settings_page.py`, shared form widgets in new `ui/fields.py`); `AutoDesignParams` no longer holds the SAP file path; SAP2000 connection and these three steps confirmed by the user on a real SAP2000 v23
+    - Auto Design wizard: step 1 SAP2000 file drop area (`ui/page.py`), step 2 sections table (`ui/sections_page.py`), GA settings (new `ui/ga_settings_page.py`, shared form widgets in new `ui/fields.py`); `AutoDesignParams` no longer holds the SAP file path; SAP2000 connection and these first steps confirmed by the user on a real SAP2000 v23
     - (2026-10-28) GA settings gained `updateSeismicLoads` and `modelsFolder` (`params.py`, `ui/ga_settings_page.py`); Simulate Evolution button with its icon (`ui/icons.py`, `Run-Genetic.png`)
     - (2026-10-28) run page (`ui/run_page.py`): progress bar, live tiles, evolution chart, status log, Cancel / Back; `services/run_monitor.py` (`RunMonitor`, `RunCancelled`, `GenerationStats`); `ui/wizard.py` runs the GA in `_RunWorker` (QThread) and feeds the page
     - (2026-10-28) GA steps 5 to 7 in `services/ga_run.py` (`GAContext`, `run_ga`) with `section_materials.py` (Material Type per section), `frame_assignments.py` (section per frame), `model_geometry.py` (joint coordinates, frame connectivity), `sap_tables.py`; `SectionPermission.materialType` added; `SapClient.read_table` added
-    - (2026-11-01) GA step 8 (initial population): new `services/population.py` (`Individual`, role constants, `classify_frame` stub, `build_gene_options`, `random_genes`) and `services/fitness.py` (`fitness_calculator` stub); `ga_run.py` (`GAContext.sapPath`, `population`, `rng`, `step8_initial_population`); `wizard.py` passes `sapPath`
+    - (2026-11-01) GA step 8 (initial population): new `services/population.py` (`Individual`, role constants, `build_gene_options`, `random_genes`) and `services/fitness.py` (`fitness_calculator` stub); `ga_run.py` (`GAContext.sapPath`, `population`, `rng`, `step8_initial_population`); `wizard.py` passes `sapPath`
     - (2026-11-01) database folder is cleared at the start of every run: new `services/database_folder.py`, `ga_run.prepare_database_folder`, warning dialog in `wizard.py` (`_confirm_database_folder`)
     - (2026-11-01) `core/sap_client.py`: `unlock_model`, `assign_frame_section`, `save_model_as`
     - README rewritten to match (layout, Auto Design section, unverified list, next session)
@@ -351,6 +383,12 @@ Known technical issues to fix next:
     - (2026-11-02) tests: `tests/auto_design/test_genetic_operators.py`, `tests/auto_design/test_database_folder.py`
     - (2026-11-02) rule `2 <= tournamentSize <= popSize` agreed (UI check in `ui/ga_settings_page.py`, plus the algorithm's own error)
     - (2026-11-02) README updated: the "20 steps" count sub-steps, steps 1 to 9 are described, step 10 (typing of the selected member) is still to be described
+    - (2026-11-03) frame types: new wizard step 3 `ui/roles_page.py` (`FrameRolesPage`) with the tolerance moved there from the GA settings (`AutoDesignParams.tolerance` removed), `classify_frame` / `classify_frames` written in `services/population.py`, `GAContext.frameRoles`, `wizard.py` keeps `frame_roles` (README brought in line with this code)
+    - (2026-11-03) fitness: `services/fitness.py` rewritten (`fitness_calculator` returns `Fitness` with weight W and constraint violation CV; general CV formula with `CvWeights`, `ELEMENT_CONSTRAINTS` / `GLOBAL_CONSTRAINTS`; `ranking_key`; `fitness_value` removed); new `services/design_results.py` (weight from `Material List 1 - By Object Type`; stress ratios from `DesignSteel.GetSummaryResults`, `DesignConcrete.GetSummaryResultsColumn` and `GetSummaryResultsBeam`; concrete beam error = fixed ratio 1.5)
+    - (2026-11-03) `core/sap_client.py`: `run_analysis`, `run_steel_design`, `run_concrete_design`; `open_model` now sets kgf-m-C (weight in kg)
+    - (2026-11-03) selection by feasibility: `genetic_operators.py` takes a `rank` key (smaller = better) instead of `score`; feasible members (CV <= 1e-6) first by weight, then infeasible by CV; `ga_run.py` uses `ranking_key` in the tournament and in step 9.2
+    - (2026-11-03) `ga_run.py`: `_report_generation` feeds `monitor.generation(GenerationStats)` (generation 0 after step 8 and after every iteration of step 9), so the tiles and the chart of the run page fill in
+    - (2026-11-03) README updated to match; first full run on a real SAP2000 worked; F5 debugger crash solved by the VSCode debug settings
 
 * [1.1.6] - (2026-10-27):
     - version raised to 1.1.6 (`version.py`; `pyproject.toml` must show the same); `docs/sld_to_sap_algorithm.md` carries the app version number

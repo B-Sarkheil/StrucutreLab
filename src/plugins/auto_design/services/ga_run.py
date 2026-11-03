@@ -51,8 +51,10 @@ from src.plugins.auto_design.services.database_folder import (
 
 logger = logging.getLogger(__name__)
 
-# The whole algorithm has 20 steps; steps 1-4 happen in the wizard pages
-# (file, sections, frame types + settings, Simulate Evolution), so the run starts at 5.
+  # Steps 1-4 are the wizard pages (1 reference file, 2 allowed sections, 3 frame
+  # types, 4 GA settings + the Simulate Evolution button); the run starts at
+  # step 5. The "20" counts the sub-steps too and is only used by the temporary
+  # progress estimate; it is not a step number.
 TOTAL_STEPS = 20
 FIRST_RUN_STEP = 5
 
@@ -75,8 +77,7 @@ class GAContext:
 
 def prepare_database_folder(ctx: GAContext) -> None:
     """Start of the run: clear the database folder (the user has confirmed it
-    in the wizard). It is not one of the 20 steps, so it does not count in
-    the progress."""
+    in the wizard). It belongs to step 4 (the Simulate Evolution button asks the user to confirm it) and does not count in the progress."""
 
     ctx.monitor.status("Clearing the database folder")
 
@@ -224,7 +225,7 @@ def step8_initial_population(ctx: GAContext) -> None:
     total = ctx.params.popSize + ctx.params.popSize % 2
 
     # The role of every frame (column, beam, ...) was decided once, on the
-    # "Frame types" page, from the reference model. Every frame read in
+    # "Frame types" page (step 3), from the reference model. Every frame read in
     # step 6 must have one.
     missing_roles = sorted(set(ctx.frameSections) - set(ctx.frameRoles))
 

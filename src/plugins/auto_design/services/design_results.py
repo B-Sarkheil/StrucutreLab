@@ -1,4 +1,4 @@
-"""Auto Design - results of the SAP2000 analysis and design (no Qt).
+"""Auto Design - results of the SAP2000 analysis and design (no Qt); used by the fitness (steps 8 and 9).
 
 Reads what `fitness_calculator` needs AFTER the analysis and the steel /
 concrete design have run:

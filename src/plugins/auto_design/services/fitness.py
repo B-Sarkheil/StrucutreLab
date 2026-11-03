@@ -1,4 +1,4 @@
-"""Auto Design - fitness of one model (no Qt).
+"""Auto Design - fitness of one model (no Qt); used by steps 8 and 9.
 
 `fitness_calculator` runs the analysis and the design of the open SAP2000
 model and returns a `Fitness`: the weight W and the constraint violation CV.
