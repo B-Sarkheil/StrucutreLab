@@ -340,7 +340,7 @@ class GASettingsPage(QWidget):
             tournament_size,
             gen_size,
             mutation_percent,
-            penalize_level,
+            #penalize_level,
             models_folder,
         ):
             return

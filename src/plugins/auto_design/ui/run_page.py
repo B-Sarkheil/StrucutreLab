@@ -31,6 +31,7 @@ from PySide6.QtCore import (
     QAbstractAnimation,
     QEasingCurve,
     QElapsedTimer,
+    QEvent,
     QPointF,
     QRectF,
     QSize,
@@ -574,14 +575,14 @@ class EvolutionChart(QWidget):
         )
 
     def _x_max(self) -> float:
-        last = max((s.generation for s in self._stats), default=0)
+        last = max((s.generation for s in self._stats), default=1)
 
-        return float(max(self._total, last, 1))
+        return float(max(self._total, last, 2))
 
     def _x_of(self, plot: QRectF, generation: float) -> float:
         data = plot.adjusted(self.INNER_X, 0, -self.INNER_X, 0)
 
-        return data.left() + generation / self._x_max() * data.width()
+        return data.left() + (generation - 1) / (self._x_max() - 1) * data.width()
 
     @staticmethod
     def _y_of(plot: QRectF, lo: float, hi: float, value: float) -> float:
@@ -678,8 +679,8 @@ class EvolutionChart(QWidget):
             )
 
         x_max = self._x_max()
-        step = _nice_int_step(x_max)
-        generation = 0
+        step = _nice_int_step(x_max - 1)
+        generation = 1
 
         while generation <= x_max + 1e-9:
             x = self._x_of(plot, generation)
@@ -1199,6 +1200,35 @@ class StatusLog(QListWidget):
         self._pulse.stop()
         super().hideEvent(event)
 
+class CancelButton(QPushButton):
+    """Cancel button whose X icon follows the hover: red normally, white
+    while the mouse is over it (the button fills with red then)."""
+
+    def __init__(self, text: str, parent: QWidget | None = None):
+        super().__init__(text, parent)
+
+        self._normal = cancel_icon(22)
+        self._hover = cancel_icon(22, color="#FFFFFF")
+        self.setIcon(self._normal)
+        self.setIconSize(QSize(22, 22))
+
+    def enterEvent(self, event):
+        if self.isEnabled():
+            self.setIcon(self._hover)
+
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.setIcon(self._normal)
+        super().leaveEvent(event)
+
+    def changeEvent(self, event):
+        # After Cancel is pressed the button is disabled while the mouse is
+        # still over it: go back to the normal (gray when disabled) icon.
+        if event.type() == QEvent.Type.EnabledChange:
+            self.setIcon(self._normal)
+
+        super().changeEvent(event)
 
 # ---------------------------------------------------------------------
 # The page
@@ -1411,10 +1441,8 @@ class RunPage(QWidget):
         self.back_button.setMinimumSize(110, 42)
         self.back_button.clicked.connect(self._on_back_clicked)
 
-        self.cancel_button = QPushButton("  Cancel")
+        self.cancel_button = CancelButton("  Cancel")
         self.cancel_button.setObjectName("cancelButton")
-        self.cancel_button.setIcon(cancel_icon(22))
-        self.cancel_button.setIconSize(QSize(22, 22))
         self.cancel_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.cancel_button.setMinimumSize(150, 42)
         self.cancel_button.clicked.connect(self._on_cancel_clicked)

@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QVBoxLayout,
     QWidget,
+    QGridLayout,
 )
 
 from src.ui.theme import (
@@ -54,6 +55,7 @@ from src.ui.theme import (
 from src.ui.widgets import ClickableFrame, arrow_icon, draw_corner_ticks, mix, with_alpha
 
 SAP_ICON_NAMES = ("sap.png", "sap.ico", "sao.ico")
+GREEN = "#3DDC97"  # color of the "file selected" state
 
 PAGE_STYLE = f"""
     QLabel#dropTitle {{
@@ -86,6 +88,34 @@ PAGE_STYLE = f"""
         color: {DANGER};
         font-size: 9.5pt;
     }}
+        QLabel#dropChip[selected="true"] {{
+        color: {GREEN};
+        border: 1px solid {GREEN};
+        font-weight: 600;
+    }}
+    QFrame#assumptionsCard {{
+        background: {INK_RAISED};
+        border: 1px solid {RULE};
+        border-left: 3px solid {AMBER};
+        border-radius: 12px;
+    }}
+    QLabel#assumptionsTitle {{
+        background: transparent;
+        color: {AMBER};
+        font-family: "{FONT_TITLE}";
+        font-size: 11.5pt;
+        font-weight: 700;
+    }}
+    QLabel#assumptionNumber {{
+        background: transparent;
+        color: {AMBER};
+        font-weight: 700;
+    }}
+    QLabel#assumptionText {{
+        background: transparent;
+        color: {PAPER};
+        font-size: 9.5pt;
+    }}
 """
 
 
@@ -103,8 +133,8 @@ def _format_size(size: int) -> str:
 class IconBadge(QWidget):
     """SAP2000 logo on a round badge with a soft glow."""
 
-    SIZE = 124
-    ICON = 68
+    SIZE = 112
+    ICON = 62
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -113,6 +143,7 @@ class IconBadge(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
         self._active = 0.0
+        self._selected = False
         self._pixmap = self._load_icon()
 
     @classmethod
@@ -137,6 +168,10 @@ class IconBadge(QWidget):
         self._active = max(0.0, min(1.0, value))
         self.update()
 
+    def set_selected(self, selected: bool) -> None:
+        self._selected = selected
+        self.update()
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -144,22 +179,28 @@ class IconBadge(QWidget):
 
         center = QPointF(self.width() / 2, self.height() / 2)
         radius = self.width() / 2
+        accent = GREEN if self._selected else CYAN
 
         glow = QRadialGradient(center, radius)
-        glow.setColorAt(0.0, with_alpha(CYAN, int(45 + 60 * self._active)))
-        glow.setColorAt(1.0, with_alpha(CYAN, 0))
+        glow.setColorAt(0.0, with_alpha(accent, int(45 + 60 * self._active)
+                                        + (30 if self._selected else 0)))
+        glow.setColorAt(1.0, with_alpha(accent, 0))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(glow))
         painter.drawEllipse(center, radius, radius)
 
-        ring = QPen(with_alpha(CYAN, 80), 1)
-        ring.setDashPattern([2.0, 4.0])
+        ring = QPen(with_alpha(accent, 140 if self._selected else 80), 1.4 if self._selected else 1)
+
+        if not self._selected:
+            ring.setDashPattern([2.0, 4.0])
+
         painter.setPen(ring)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawEllipse(center, radius * 0.92, radius * 0.92)
 
         disc = radius * 0.72
-        painter.setPen(QPen(mix(RULE_HI, AMBER, self._active), 1.5))
+        edge = QColor(GREEN) if self._selected else mix(RULE_HI, CYAN, self._active)
+        painter.setPen(QPen(edge, 1.8 if self._selected else 1.5))
         painter.setBrush(QBrush(QColor(HERO_BG)))
         painter.drawEllipse(center, disc, disc)
 
@@ -173,20 +214,49 @@ class IconBadge(QWidget):
                 center.x() - width / 2, center.y() - height / 2, width, height
             )
             painter.drawPixmap(target, self._pixmap, QRectF(self._pixmap.rect()))
-            return
+        else:
+            # Fallback when sap.ico is not in the icons folder.
+            font = QFont(FONT_TITLE)
+            font.setPointSize(20)
+            font.setBold(True)
+            painter.setFont(font)
+            painter.setPen(QColor(accent))
+            painter.drawText(
+                QRectF(0, 0, self.width(), self.height()),
+                Qt.AlignmentFlag.AlignCenter,
+                "SAP",
+            )
 
-        # Fallback when sap.ico is not in the icons folder.
-        font = QFont(FONT_TITLE)
-        font.setPointSize(20)
-        font.setBold(True)
-        painter.setFont(font)
-        painter.setPen(QColor(CYAN))
-        painter.drawText(
-            QRectF(0, 0, self.width(), self.height()),
-            Qt.AlignmentFlag.AlignCenter,
-            "SAP",
+        if self._selected:
+            self._paint_check(painter, center, radius)
+
+    @staticmethod
+    def _paint_check(painter: QPainter, center: QPointF, radius: float) -> None:
+        """Green round badge with a white tick, at the lower right of the disc."""
+
+        c = QPointF(center.x() + radius * 0.56, center.y() + radius * 0.56)
+        r = 15.0
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(with_alpha(GREEN, 70)))
+        painter.drawEllipse(c, r + 5, r + 5)
+
+        painter.setPen(QPen(QColor(HERO_BG), 2.5))
+        painter.setBrush(QColor(GREEN))
+        painter.drawEllipse(c, r, r)
+
+        tick = QPen(QColor("#FFFFFF"), 3.0)
+        tick.setCapStyle(Qt.PenCapStyle.RoundCap)
+        tick.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(tick)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPolyline(
+            [
+                QPointF(c.x() - 6.5, c.y() + 0.5),
+                QPointF(c.x() - 2.0, c.y() + 5.0),
+                QPointF(c.x() + 6.5, c.y() - 5.0),
+            ]
         )
-
 
 class DropZone(ClickableFrame):
     """Big area: drop a .sdb file here or click to browse.
@@ -197,7 +267,7 @@ class DropZone(ClickableFrame):
     file_dropped = Signal(str)
 
     RADIUS = 16
-    PATH_WIDTH = 560
+    PATH_WIDTH = 780
     GRID_STEP = 24
     GRID_MAJOR = 4
 
@@ -205,7 +275,7 @@ class DropZone(ClickableFrame):
         super().__init__(parent)
 
         self.setObjectName("dropZone")
-        self.setMinimumHeight(320)
+        self.setMinimumHeight(340)
         self.setAcceptDrops(True)
 
         self._dragging = False
@@ -225,7 +295,6 @@ class DropZone(ClickableFrame):
         self.hint = QLabel()
         self.hint.setObjectName("dropHint")
         self.hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.hint.setWordWrap(True)
         self.hint.setMaximumWidth(self.PATH_WIDTH + 40)
 
         self.detail = QLabel()
@@ -246,7 +315,7 @@ class DropZone(ClickableFrame):
         self.chip.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
         layout.addWidget(self.badge, 0, Qt.AlignmentFlag.AlignHCenter)
-        layout.addSpacing(8)
+        layout.addSpacing(12)
         layout.addWidget(self.title, 0, Qt.AlignmentFlag.AlignHCenter)
         layout.addSpacing(6)
         layout.addWidget(self.hint, 0, Qt.AlignmentFlag.AlignHCenter)
@@ -270,20 +339,24 @@ class DropZone(ClickableFrame):
 
         if path is None:
             self.title.setText("Select your SAP2000 model")
+            self.hint.setWordWrap(True)
             self.hint.setText(
-                "Drag and drop a .sdb file here, or click anywhere in this area to "
-                "browse. This is the reference model Auto Design opens to read its "
-                "sections and run the analyses."
+                "Drag and drop a .sdb file here, or click anywhere in this area to browse."
             )
             self.hint.setToolTip("")
             self.detail.setText("")
             self.detail.setVisible(False)
-            self.chip.setVisible(True)
+            self.chip.setText("SAP2000 v23  *.sdb")
+            self._set_chip_selected(False)
             self.browse_button.setText("Browse files…")
         else:
             file = Path(path)
-            metrics = QFontMetrics(self.hint.font())
-            folder = metrics.elidedText(
+
+            # Measure with the real font of the label (10 pt from the style
+            # sheet); the default font is narrower and let the path wrap.
+            font = QFont(self.hint.font())
+            font.setPointSizeF(10.0)
+            folder = QFontMetrics(font).elidedText(
                 str(file.parent), Qt.TextElideMode.ElideMiddle, self.PATH_WIDTH
             )
 
@@ -293,15 +366,23 @@ class DropZone(ClickableFrame):
                 size = "unknown size"
 
             self.title.setText(file.name)
+            self.hint.setWordWrap(False)
             self.hint.setText(folder)
             self.hint.setToolTip(str(file))
             self.detail.setText(f"{size}  ·  drop another file to replace it")
             self.detail.setVisible(True)
-            self.chip.setVisible(False)
+            self.chip.setText("✓  FILE SELECTED")
+            self._set_chip_selected(True)
             self.browse_button.setText("Change file…")
 
+        self.badge.set_selected(self._has_file)
         self._sync_badge()
         self.update()
+
+    def _set_chip_selected(self, selected: bool) -> None:
+        self.chip.setProperty("selected", selected)
+        self.chip.style().unpolish(self.chip)
+        self.chip.style().polish(self.chip)
 
     def _set_dragging(self, dragging: bool) -> None:
         self._dragging = dragging
@@ -371,23 +452,25 @@ class DropZone(ClickableFrame):
         shape = QPainterPath()
         shape.addRoundedRect(rect, self.RADIUS, self.RADIUS)
 
-        painter.fillPath(shape, QBrush(mix(INK_RAISED, INK_HI, t)))
+        base = mix(INK_RAISED, GREEN, 0.09) if self._has_file else INK_RAISED
+        painter.fillPath(shape, QBrush(mix(base, INK_HI, t)))
 
         painter.save()
         painter.setClipPath(shape)
         self._paint_grid(painter, rect)
         painter.restore()
 
-        pen = QPen(mix(RULE_HI, AMBER, t), 1.5)
-
-        if not self._has_file:
+        if self._has_file:
+            pen = QPen(mix(GREEN, CYAN, t), 2.0)  # solid green frame
+        else:
+            pen = QPen(mix(RULE_HI, CYAN, t), 1.5)
             pen.setDashPattern([6.0, 4.0])
 
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.setPen(pen)
         painter.drawPath(shape)
 
-        tick = mix(CYAN if self._has_file else RULE_HI, AMBER, t)
+        tick = mix(GREEN if self._has_file else RULE_HI, CYAN, t)
         draw_corner_ticks(painter, rect, tick, inset=12.0, length=12.0)
 
     def _paint_grid(self, painter: QPainter, rect: QRectF) -> None:
@@ -446,6 +529,9 @@ class AutoDesignPage(QWidget):
         layout.addWidget(subtitle)
         layout.addSpacing(20)
 
+        layout.addWidget(self._build_assumptions())
+        layout.addSpacing(14)
+
         self.zone = DropZone()
         self.zone.clicked.connect(self._browse)
         self.zone.file_dropped.connect(self._accept_path)
@@ -483,6 +569,54 @@ class AutoDesignPage(QWidget):
 
         return self._path or ""
 
+    # -----------------------------------------------------------------
+    # Assumptions
+    # -----------------------------------------------------------------
+    ASSUMPTIONS = (
+        "The structure is assumed to be loaded correctly.",
+        "Design parameters and design codes are taken from this file and will not be changed.",
+        "Only the sections already defined in this file are used; no new section is created.",
+        "The geometry of the structure follows the reference model and will not change.",
+        "The material of each element is decided by the section assigned to it in this file.",
+        "All designs use the design combinations selected in this file.",
+    )
+
+    def _build_assumptions(self) -> QFrame:
+        card = QFrame()
+        card.setObjectName("assumptionsCard")
+
+        outer = QVBoxLayout(card)
+        outer.setContentsMargins(22, 16, 22, 18)
+        outer.setSpacing(10)
+
+        title = QLabel("ALGORITHM ASSUMPTIONS")
+        title.setObjectName("assumptionsTitle")
+        outer.addWidget(title)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(7)
+        grid.setColumnStretch(1, 1)
+
+        for row, text in enumerate(self.ASSUMPTIONS):
+            number = QLabel(f"{row + 1}.")
+            number.setObjectName("assumptionNumber")
+            number.setAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop
+            )
+
+            label = QLabel(text)
+            label.setObjectName("assumptionText")
+            label.setWordWrap(True)
+
+            grid.addWidget(number, row, 0)
+            grid.addWidget(label, row, 1)
+
+        outer.addLayout(grid)
+
+        return card
+    
+    
     # -----------------------------------------------------------------
     # Actions
     # -----------------------------------------------------------------

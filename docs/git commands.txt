@@ -2,7 +2,7 @@ cd "D:\Python Library\StructureLab"
 
 
 git add .
-git commit -m "Step numbering recorder in the codes, README.md updated"
+git commit -m "Progress bar improvement, some graphice enhancements"
 git push origin main
 
 

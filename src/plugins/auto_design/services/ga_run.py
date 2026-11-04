@@ -201,12 +201,13 @@ def _make_member(
     ctx.monitor.status(f"Generation {generation}: evaluating member {member} of {total}")
     individual = Individual(name, path, genes)
     individual.fitness = fitness_calculator(ctx.sap, path)
+    _member_done(ctx)
 
     return individual
 
 def _report_generation(ctx: GAContext, generation: int) -> None:
     """Send the numbers of the current population to the run page
-    (generation 0 = the initial population)."""
+    (generation 1 = the initial population)."""
 
     def rank(individual: Individual):
         return ranking_key(individual.fitness)
@@ -231,8 +232,9 @@ def step8_initial_population(ctx: GAContext) -> None:
     # Final size is always even (members are paired later).
     total = ctx.params.popSize + ctx.params.popSize % 2
 
-    # Whole run: N members of generation 1 + N children in each of genSize iterations.
-    ctx.totalMembers = total * (1 + ctx.params.genSize)
+    # Whole run: N members of generation 1 + N children in each of the
+    # genSize - 1 iterations of step 9.
+    ctx.totalMembers = total * (1 + (ctx.params.genSize - 1))
     ctx.doneMembers = 0
 
     # The role of every frame (column, beam, ...) was decided once, on the
@@ -289,11 +291,11 @@ def step8_initial_population(ctx: GAContext) -> None:
     logger.info(
         "Step 8 - initial population: %d members in %s", len(ctx.population), generation_dir
     )
-    _report_generation(ctx, 0)
+    _report_generation(ctx, 1)
 
 
 def step9_generations(ctx: GAContext) -> None:
-    """Step 9: loop g = 1 .. genSize.
+    """Step 9: loop g = 1 .. genSize-1.
 
     9.1  Pair m = 1 .. N/2 (N = even population size) gives two children.
          The children are built INSIDE Generation-g, next to their parents,
@@ -320,7 +322,7 @@ def step9_generations(ctx: GAContext) -> None:
     
 
 
-    for g in range(1, ctx.params.genSize + 1):
+    for g in range(1, ctx.params.genSize):
         ctx.generation = g
         ctx.offspring = []
 
@@ -358,7 +360,7 @@ def step9_generations(ctx: GAContext) -> None:
         )
 
         _step9_2_next_generation(ctx, g, total, rank)
-        _report_generation(ctx, g)
+        _report_generation(ctx, g+1)
 
 
 
