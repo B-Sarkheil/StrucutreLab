@@ -1,4 +1,4 @@
-"""Auto Design - last step: genetic-algorithm settings and run.
+"""Auto Design - step 4: genetic-algorithm settings and the Simulate Evolution button (it starts the run, steps 5 and on).
 
 Collects the GA parameters, the "update seismic loads" option and the
 database folder where the models of every generation are saved. Values
@@ -44,6 +44,7 @@ from src.plugins.auto_design.ui.icons import evolution_run_icon
 from src.plugins.sld_to_sap.ui.icons import folder_icon
 from src.ui.theme import AMBER, BLUE, CYAN, FONT_TITLE, ICONS_DIR, PAPER
 from src.ui.widgets import arrow_icon
+from PySide6.QtGui import QColor, QIcon, QPixmap, QRegion
 
 DEFAULT_FOLDER_NAME = "SAP Models"
 
@@ -60,7 +61,7 @@ RUN_STYLE = f"""
         font-family: "{FONT_TITLE}";
         font-size: 14pt;
         font-weight: 700;
-        padding: 10px 34px;
+        padding: 4px 30px;
     }}
     QPushButton#runButton:hover {{
         background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
@@ -77,6 +78,15 @@ RUN_STYLE = f"""
     }}
 """
 
+def _trimmed_pixmap(pixmap: QPixmap) -> QPixmap:
+    """The pixmap without its transparent margin, so the icon fills its box."""
+
+    bounds = QRegion(pixmap.mask()).boundingRect()
+
+    if bounds.isEmpty():
+        return pixmap
+
+    return pixmap.copy(bounds)
 
 class GASettingsPage(QWidget):
     """Parameter form of the genetic algorithm."""
@@ -143,20 +153,20 @@ class GASettingsPage(QWidget):
         self.tournamentSize = Field("Tournament Size", "Integer, 2 or more")
         self.genSize = Field("Number of Generations", "Positive integer")
         self.mutationPercent = Field("Mutation Percent (%)", "0 to 100")
-        self.penalizeLevel = Field("Penalize Level Coefficient", "Positive number")
+        #self.penalizeLevel = Field("Penalize Level Coefficient", "Positive number")
 
         # Default values
         self.popSize.edit.setText("100")
         self.tournamentSize.edit.setText("4")
         self.genSize.edit.setText("10")
         self.mutationPercent.edit.setText("0")
-        self.penalizeLevel.edit.setText("1")
+        #self.penalizeLevel.edit.setText("1")
 
         grid.addWidget(self.popSize, 0, 0)
         grid.addWidget(self.tournamentSize, 0, 1)
         grid.addWidget(self.genSize, 1, 0)
         grid.addWidget(self.mutationPercent, 1, 1)
-        grid.addWidget(self.penalizeLevel, 2, 0)
+        #grid.addWidget(self.penalizeLevel, 2, 0)
 
         card_layout.addLayout(grid)
         card_layout.addSpacing(8)
@@ -209,13 +219,13 @@ class GASettingsPage(QWidget):
 
         if run_icon.isNull():
             # icon file missing: use the icon drawn in code
-            self.run_button.setIcon(evolution_run_icon(30))
-            self.run_button.setIconSize(QSize(42, 30))
+            self.run_button.setIcon(evolution_run_icon(44))
+            self.run_button.setIconSize(QSize(62, 44))
         else:
-            self.run_button.setIcon(QIcon(run_icon))
-            self.run_button.setIconSize(QSize(40, 40))
+            self.run_button.setIcon(QIcon(_trimmed_pixmap(run_icon)))
+            self.run_button.setIconSize(QSize(60, 60))
         self.run_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.run_button.setMinimumSize(330, 62)
+        self.run_button.setMinimumSize(300, 60)
         self.run_button.setDefault(True)
         self.run_button.clicked.connect(self._on_run)
 
@@ -241,7 +251,7 @@ class GASettingsPage(QWidget):
             self.tournamentSize,
             self.genSize,
             self.mutationPercent,
-            self.penalizeLevel,
+            #self.penalizeLevel,
             self.modelsFolder,
         ):
             field.edit.returnPressed.connect(self._on_run)
@@ -322,7 +332,7 @@ class GASettingsPage(QWidget):
         tournament_size = parse_int(self.tournamentSize)
         gen_size = parse_int(self.genSize)
         mutation_percent = parse_float(self.mutationPercent, maximum=100.0)
-        penalize_level = parse_float(self.penalizeLevel)
+        #penalize_level = parse_float(self.penalizeLevel)
         models_folder = self._check_folder()
 
         if None in (
@@ -349,7 +359,7 @@ class GASettingsPage(QWidget):
                 tournamentSize=tournament_size,
                 genSize=gen_size,
                 mutationPercent=mutation_percent,
-                penalizeLevel=penalize_level,
+                #penalizeLevel=penalize_level,
                 updateSeismicLoads=self.updateSeismicLoads.isChecked(),
                 modelsFolder=models_folder,
             )

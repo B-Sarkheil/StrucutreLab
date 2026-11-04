@@ -26,6 +26,9 @@ runtime/python/
 desktop.ini
 Thumbs.db
 
+# SAP test files
+/tests/auto_design/SAP ref/
+
 # VS Code
 # Project workspace settings are intentionally tracked.
 # Do not ignore .vscode/

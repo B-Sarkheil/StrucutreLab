@@ -214,7 +214,7 @@ class AutoDesignWizard(QStackedWidget):
             self.setCurrentWidget(self._roles_page)
 
     # -----------------------------------------------------------------
-    # Step 4 -> run
+    # Step 4 -> run (steps 5 and on)
     # -----------------------------------------------------------------
 
     def _on_params_accepted(self, params: AutoDesignParams) -> None:
@@ -222,13 +222,13 @@ class AutoDesignWizard(QStackedWidget):
 
         logger.info(
             "GA settings accepted: pop=%d, tournament=%d, generations=%d, "
-            "mutation=%.2f%%, penalty=%.3g, "
+            "mutation=%.2f%%, "
             "update seismic loads=%s, models folder=%s",
             params.popSize,
             params.tournamentSize,
             params.genSize,
             params.mutationPercent,
-            params.penalizeLevel,
+            #params.penalizeLevel,
             params.updateSeismicLoads,
             params.modelsFolder,
         )

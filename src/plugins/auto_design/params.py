@@ -16,13 +16,13 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class AutoDesignParams:
-    """Validated values of the GA settings form (last step)."""
+    """Validated values of the GA settings form (step 4)."""
 
     popSize: int  # population size, > 0
     tournamentSize: int  # tournament selection size, 2..popSize
     genSize: int  # number of generations, > 0
     mutationPercent: float  # mutation percent, 0..100
-    penalizeLevel: float  # penalty coefficient k, > 0
+    #penalizeLevel: float  # penalty coefficient k, > 0
     updateSeismicLoads: bool = False  # update the seismic loads of every offspring model
     modelsFolder: str = ""  # database folder where the models of every generation are saved
 

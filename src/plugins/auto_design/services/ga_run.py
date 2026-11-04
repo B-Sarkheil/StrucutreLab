@@ -74,6 +74,8 @@ class GAContext:
     generation: int = 1  # number of the generation in `population`
     rng: random.Random = field(default_factory=random.Random)
     monitor: RunMonitor = field(default_factory=RunMonitor)
+    totalMembers: int = 0  # members to evaluate in the whole run (step 8 + step 9)
+    doneMembers: int = 0  # members evaluated so far (progress)
 
 def prepare_database_folder(ctx: GAContext) -> None:
     """Start of the run: clear the database folder (the user has confirmed it
@@ -165,6 +167,11 @@ def step7_geometry(ctx: GAContext) -> None:
         len(ctx.frameConnectivity),
     )
 
+def _member_done(ctx: GAContext) -> None:
+    """One member has been evaluated: report the real progress of the run."""
+
+    ctx.doneMembers += 1
+    ctx.monitor.progress(ctx.doneMembers / max(1, ctx.totalMembers))
 
 def _make_member(
     ctx: GAContext, generation: int, member: int, total: int, genes: dict[str, str]
@@ -224,6 +231,10 @@ def step8_initial_population(ctx: GAContext) -> None:
     # Final size is always even (members are paired later).
     total = ctx.params.popSize + ctx.params.popSize % 2
 
+    # Whole run: N members of generation 1 + N children in each of genSize iterations.
+    ctx.totalMembers = total * (1 + ctx.params.genSize)
+    ctx.doneMembers = 0
+
     # The role of every frame (column, beam, ...) was decided once, on the
     # "Frame types" page (step 3), from the reference model. Every frame read in
     # step 6 must have one.
@@ -263,6 +274,7 @@ def step8_initial_population(ctx: GAContext) -> None:
     ctx.monitor.status(f"Generation 1: evaluating member 1 of {total}")
     ctx.sap.open_model(path)
     reference.fitness = fitness_calculator(ctx.sap, path)
+    _member_done(ctx)
 
     # 8.2  the other members
     for i in range(1, total):
@@ -303,7 +315,7 @@ def step9_generations(ctx: GAContext) -> None:
             f"Three-point crossover needs at least 3 frames, the model has {len(frames)}."
         )
 
-    def rank(individual): 
+    def rank(individual):
         return ranking_key(individual.fitness)
     
 
@@ -350,7 +362,7 @@ def step9_generations(ctx: GAContext) -> None:
 
 
 
-def _step9_2_next_generation(ctx: GAContext, g: int, size: int, score) -> None:
+def _step9_2_next_generation(ctx: GAContext, g: int, size: int, rank) -> None:
     """Step 9.2: the `size` best of parents + children (2N members in
     Generation-g) are copied to Generation-(g+1) and become the population.
 
@@ -374,10 +386,10 @@ def _step9_2_next_generation(ctx: GAContext, g: int, size: int, score) -> None:
     generation_dir = Path(ctx.params.modelsFolder) / f"Generation-{g + 1}"
     next_population: list[Individual] = []
 
-    for rank, individual in enumerate(survivors, start=1):
+    for position, individual in enumerate(survivors, start=1):
         ctx.monitor.raise_if_cancelled()
 
-        name = member_name(g + 1, rank)
+        name = member_name(g + 1, position)
         path = copy_member_model(individual.path, generation_dir / name, name)
         next_population.append(Individual(name, path, dict(individual.genes), individual.fitness))
 
@@ -406,4 +418,3 @@ def run_ga(ctx: GAContext) -> None:
 
     for done, step in enumerate(steps, start=1):
         step(ctx)
-        ctx.monitor.progress(done / total)

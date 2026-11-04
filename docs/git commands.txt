@@ -2,7 +2,7 @@ cd "D:\Python Library\StructureLab"
 
 
 git add .
-git commit -m "Auto Design Plugin developed: classify frame and new page for edit, fitness_calculator algorithm"
+git commit -m "Step numbering recorder in the codes, README.md updated"
 git push origin main
 
 
@@ -23,3 +23,14 @@ git config --global http.proxy http://kerio:3128
 
 git reset --soft HEAD~1     ===> undo all commit changes
 git reset HEAD~1            ===> just delete the commit
+
+
+
+### to remove a mistaken push folder to the server ###
+/tests/auto_design/SAP ref/        ==> add to gitignore
+
+cd "D:\Python Library\StructureLab"
+git rm -r --cached -- "tests/auto_design/SAP ref"
+git add .gitignore
+git commit -m "Remove SAP reference files from repository"
+git push origin main

@@ -67,6 +67,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.plugins.auto_design.services.run_monitor import GenerationStats
+from src.plugins.auto_design.ui.icons import cancel_icon
 from src.ui.theme import (
     AMBER,
     BLUE,
@@ -1410,8 +1411,10 @@ class RunPage(QWidget):
         self.back_button.setMinimumSize(110, 42)
         self.back_button.clicked.connect(self._on_back_clicked)
 
-        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button = QPushButton("  Cancel")
         self.cancel_button.setObjectName("cancelButton")
+        self.cancel_button.setIcon(cancel_icon(22))
+        self.cancel_button.setIconSize(QSize(22, 22))
         self.cancel_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.cancel_button.setMinimumSize(150, 42)
         self.cancel_button.clicked.connect(self._on_cancel_clicked)

@@ -7,6 +7,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
 
 from src.ui.theme import STEEL_DIM
+from src.ui.theme import DANGER, STEEL_DIM
 
 
 def _paint_helix(painter: QPainter, rect: QRectF, color: QColor) -> None:
@@ -71,7 +72,6 @@ def _paint_play(painter: QPainter, rect: QRectF, color: QColor) -> None:
     painter.setBrush(color)
     painter.drawPath(path)
 
-
 def evolution_run_icon(
     size: int = 30, color: str = "#FFFFFF", disabled_color: str = STEEL_DIM
 ) -> QIcon:
@@ -102,6 +102,47 @@ def evolution_run_icon(
             QRectF(size * 0.80, size * 0.24, size * 0.50, size * 0.52),
             QColor(tone),
         )
+
+        painter.end()
+        icon.addPixmap(pixmap, mode)
+
+    return icon
+
+def cancel_icon(
+    size: int = 20,
+    color: str = DANGER,
+    hover_color: str = "#FFFFFF",
+    disabled_color: str = STEEL_DIM,
+) -> QIcon:
+    """Cancel icon: a bold X with round ends.
+
+    The color follows the button: normal, hover (the Cancel button fills
+    with red, so the X turns white) and disabled.
+    """
+
+    icon = QIcon()
+    scale = 2  # draw at 2x so it stays sharp on high-DPI screens
+
+    for mode, tone in (
+        (QIcon.Mode.Normal, color),
+        (QIcon.Mode.Active, hover_color),
+        (QIcon.Mode.Disabled, disabled_color),
+    ):
+        pixmap = QPixmap(size * scale, size * scale)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        pixmap.setDevicePixelRatio(scale)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        pen = QPen(QColor(tone), size * 0.14)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+
+        margin = size * 0.24
+        far = size - margin
+        painter.drawLine(QPointF(margin, margin), QPointF(far, far))
+        painter.drawLine(QPointF(margin, far), QPointF(far, margin))
 
         painter.end()
         icon.addPixmap(pixmap, mode)
