@@ -44,6 +44,7 @@ from PySide6.QtGui import (
     QPainterPath,
     QPen,
     QPixmap,
+    QRegion,
 )
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -79,6 +80,7 @@ from src.ui.theme import (
     CYAN,
     DANGER,
     FONT_TITLE,
+    ICONS_DIR,
     INK_DEEP,
     INK_HI,
     PAPER,
@@ -94,6 +96,8 @@ logger = logging.getLogger(__name__)
 # Column stretches shared by the header and every group card, so they line up.
 COLUMN_STRETCH = (3, 5, 2, 3)
 ROW_HEIGHT = 36
+# src/ui/assets/icons/typify.png (icon of the Typify Sections button)
+TYPIFY_ICON_PNG = ICONS_DIR / "typify.png"
 
 PAGE_STYLE = f"""
     QLabel#typeHeader {{
@@ -350,6 +354,15 @@ class _GroupCard(QFrame):
 # The page
 # ---------------------------------------------------------------------
 
+def _trimmed_pixmap(pixmap: QPixmap) -> QPixmap:
+    """The pixmap without its transparent margin, so the icon fills its box."""
+
+    bounds = QRegion(pixmap.mask()).boundingRect()
+
+    if bounds.isEmpty():
+        return pixmap
+
+    return pixmap.copy(bounds)
 
 def _i_section_icon(size: int = 44, color: str = "#FFFFFF") -> QIcon:
     """Steel I / H section (wide flanges, thin web), drawn in code."""
@@ -676,8 +689,14 @@ class TypingPage(QWidget):
 
         self.typify_button = QPushButton("  " + self.BUTTON_TEXT)
         self.typify_button.setObjectName("typifyButton")
-        self.typify_button.setIcon(_i_section_icon(44))
-        self.typify_button.setIconSize(QSize(44, 44))
+        typify_pixmap = QPixmap(str(TYPIFY_ICON_PNG))
+        if typify_pixmap.isNull():
+            # icon file missing: use the icon drawn in code
+            self.typify_button.setIcon(_i_section_icon(44))
+            self.typify_button.setIconSize(QSize(44, 44))
+        else:
+            self.typify_button.setIcon(QIcon(_trimmed_pixmap(typify_pixmap)))
+            self.typify_button.setIconSize(QSize(48, 48))
         self.typify_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.typify_button.setMinimumSize(290, 68)
         self.typify_button.setDefault(True)
