@@ -70,6 +70,7 @@ class GAContext:
     jointCoordinates: dict[str, tuple[float, float, float]] = field(default_factory=dict)  # (step 7)
     frameConnectivity: dict[str, tuple[str, str]] = field(default_factory=dict)  # (step 7)
     population: list[Individual] = field(default_factory=list)  # generation 1 (step 8)
+    referenceFitness: object | None = None  # fitness of the reference file (step 8), for the % change
     offspring: list[Individual] = field(default_factory=list)  # children of the current iteration (9.1)
     generation: int = 1  # number of the generation in `population`
     rng: random.Random = field(default_factory=random.Random)
@@ -276,6 +277,7 @@ def step8_initial_population(ctx: GAContext) -> None:
     ctx.monitor.status(f"Generation 1: evaluating member 1 of {total}")
     ctx.sap.open_model(path)
     reference.fitness = fitness_calculator(ctx.sap, path)
+    ctx.referenceFitness = reference.fitness
     _member_done(ctx)
 
     # 8.2  the other members

@@ -17,6 +17,10 @@ from src.plugins.auto_design.ui.run_page import (
     RunPage,
 )
 from src.plugins.auto_design.ui.sections_page import SectionsPage
+from src.plugins.auto_design.services.fitness import is_feasible
+from src.plugins.auto_design.services.typing_summary import best_individual
+from src.plugins.auto_design.ui.typing_page import TypingPage
+
 from src.plugins.auto_design.services.ga_run import GAContext, run_ga
 from src.plugins.auto_design.services.population import ROLE_LABELS, ROLES
 from src.plugins.auto_design.services.run_monitor import RunCancelled
@@ -86,6 +90,7 @@ class AutoDesignWizard(QStackedWidget):
         self._roles_page: FrameRolesPage | None = None
         self._ga_page: GASettingsPage | None = None
         self._run_page: RunPage | None = None
+        self._typing_page: TypingPage | None = None
 
         self.file_page = AutoDesignPage()
         self.file_page.next_requested.connect(self._show_sections)
@@ -284,6 +289,7 @@ class AutoDesignWizard(QStackedWidget):
             page = RunPage()
             page.cancel_requested.connect(self._on_cancel_requested)
             page.back_requested.connect(self._back_to_ga_settings)
+            page.next_requested.connect(self._show_typing)
 
             self._run_page = page
             self.addWidget(page)
@@ -293,6 +299,8 @@ class AutoDesignWizard(QStackedWidget):
     def _start_run(self) -> None:
         if self._run_worker is not None:
             return
+
+        self._drop_typing_page()
 
         if (
             self.sap is None
@@ -346,6 +354,11 @@ class AutoDesignWizard(QStackedWidget):
         self.sections = context.sections  # now with materialType filled
 
         if self._run_page is not None:
+            best = best_individual(context.population)
+            fit = best.fitness
+            self._run_page.set_final(
+                best.name, str(best.path), fit.weight, fit.maxRatio, is_feasible(fit), fit.cv
+            )
             self._run_page.set_state(FINISHED)
 
     def _on_run_failed(self, error: str) -> None:
@@ -361,3 +374,24 @@ class AutoDesignWizard(QStackedWidget):
 
         if self._run_page is not None:
             self._run_page.set_state(CANCELLED)
+
+    def _drop_typing_page(self) -> None:
+        if self._typing_page is not None:
+            self.removeWidget(self._typing_page)
+            self._typing_page.deleteLater()
+            self._typing_page = None
+
+    def _show_typing(self) -> None:
+        ctx = self.context
+        if ctx is None or not ctx.population:
+            return
+        self._drop_typing_page()
+        page = TypingPage(ctx, best_individual(ctx.population))
+        page.back_requested.connect(self._back_to_run_page)
+        self._typing_page = page
+        self.addWidget(page)
+        self.setCurrentWidget(page)
+
+    def _back_to_run_page(self) -> None:
+        if self._run_page is not None:
+            self.setCurrentWidget(self._run_page)

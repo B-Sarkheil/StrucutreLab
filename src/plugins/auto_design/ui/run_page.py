@@ -65,6 +65,7 @@ from PySide6.QtWidgets import (
     QStyledItemDelegate,
     QVBoxLayout,
     QWidget,
+    QSizePolicy,
 )
 
 from src.plugins.auto_design.services.run_monitor import GenerationStats
@@ -507,7 +508,7 @@ METRICS = (
     ),
     MetricSpec(
         key="ratio",
-        button="DCR ratio",
+        button="DCR",
         heading="Demand / capacity ratio of the members",
         unit="",
         decimals=3,
@@ -1234,12 +1235,40 @@ class CancelButton(QPushButton):
 # The page
 # ---------------------------------------------------------------------
 
+class ElidedLabel(QLabel):
+    """Label that never forces the page wider: a long text is cut in the
+    middle ("D:\\Models\\…\\Gen-5-1.sdb"); the full text is the tooltip."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._full = ""
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+
+    def set_full_text(self, text: str) -> None:
+        self._full = text
+        self.setToolTip(text)
+        self._refresh()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._refresh()
+
+    def _refresh(self) -> None:
+        width = max(10, self.width())
+        self.setText(
+            QFontMetrics(self.font()).elidedText(
+                self._full, Qt.TextElideMode.ElideMiddle, width
+            )
+        )
+
 
 class RunPage(QWidget):
     """Live view of one run. See the module docstring."""
 
     back_requested = Signal()
     cancel_requested = Signal()
+    next_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -1279,6 +1308,7 @@ class RunPage(QWidget):
         layout.addLayout(self._build_header())
         layout.addSpacing(16)
         layout.addWidget(self._build_progress_card())
+        layout.addWidget(self._build_final_box())
         layout.addSpacing(12)
         layout.addLayout(self._build_tiles())
         layout.addSpacing(12)
@@ -1447,12 +1477,22 @@ class RunPage(QWidget):
         self.cancel_button.setMinimumSize(150, 42)
         self.cancel_button.clicked.connect(self._on_cancel_clicked)
 
+        self.next_button = QPushButton("Next")
+        self.next_button.setIcon(arrow_icon("right"))
+        self.next_button.setIconSize(QSize(32, 24))
+        self.next_button.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.next_button.setObjectName("primaryButton")
+        self.next_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.next_button.setMinimumSize(150, 42)
+        self.next_button.clicked.connect(self.next_requested.emit)
+
         footer = QHBoxLayout()
         footer.setContentsMargins(34, 8, 34, 20)
         footer.setSpacing(10)
         footer.addWidget(self.back_button)
         footer.addStretch(1)
         footer.addWidget(self.cancel_button)
+        footer.addWidget(self.next_button)
 
         return footer
 
@@ -1467,6 +1507,7 @@ class RunPage(QWidget):
         self.chart.clear()
         self.chart.set_total(self._total)
         self.log.clear_log()
+        self.final_box.setVisible(False)
 
         self.bar.set_value(0.0, animate=False)
         self._set_percent(0.0)
@@ -1510,6 +1551,24 @@ class RunPage(QWidget):
             )
 
         self.tile_ratio.set_value(f"{stats.meanRatio:.3f}", f"max {stats.maxRatio:.3f}")
+
+    def set_final(self, name: str, path: str, weight: float,
+                  max_ratio: float, feasible: bool, cv: float) -> None:
+        """The selected member of the finished run: its SAP file and numbers."""
+
+        self._style_chip(self.chip_name, f"★ {name}", CYAN)
+        self._style_chip(self.chip_weight, f"{weight:,.1f} {WEIGHT_UNIT}", AMBER)
+        self._style_chip(
+            self.chip_dcr, f"max DCR {max_ratio:.3f}", GREEN if max_ratio <= 1.0 else DANGER
+        )
+
+        if feasible:
+            self._style_chip(self.chip_state, "✓ All constraints satisfied", GREEN)
+        else:
+            self._style_chip(self.chip_state, f"✗ Violates constraints (CV = {cv:.4g})", DANGER)
+
+        self.final_path.set_full_text(path)
+        self.final_box.setVisible(True)
 
     def set_state(self, state: str, message: str = "") -> None:
         """RUNNING, CANCELLING, CANCELLED, FINISHED or FAILED."""
@@ -1564,6 +1623,7 @@ class RunPage(QWidget):
         self.cancel_button.setVisible(active)
         self.cancel_button.setEnabled(state == RUNNING)
         self.back_button.setEnabled(not active)
+        self.next_button.setEnabled(state == FINISHED)
         self.back_button.setToolTip(
             "Cancel the run first to go back." if active else "Back to the settings"
         )
@@ -1594,3 +1654,72 @@ class RunPage(QWidget):
             return
 
         self.back_requested.emit()
+
+    # -- final box ----------------------------------------------------------
+    
+    @staticmethod
+    def _style_chip(label: QLabel, text: str, color: str) -> None:
+        tint = QColor(color)
+        label.setText(text)
+        label.setStyleSheet(
+            f"QLabel {{ color: {color};"
+            f" background: rgba({tint.red()}, {tint.green()}, {tint.blue()}, 36);"
+            f" border: 1px solid {color}; border-radius: 12px;"
+            f" padding: 3px 14px; font-size: 10pt; font-weight: 700; }}"
+        )
+
+    def _build_final_box(self) -> QWidget:
+        self.final_box = QWidget()
+        box = QVBoxLayout(self.final_box)
+        box.setContentsMargins(0, 12, 0, 0)
+
+        card = QFrame()
+        card.setObjectName("finalCard")
+        card.setStyleSheet(
+            f"QFrame#finalCard {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1,"
+            f" stop:0 {INK_HI}, stop:1 {INK_RAISED}); border: 1px solid {RULE_HI};"
+            f" border-left: 4px solid {GREEN}; border-radius: 12px; }}"
+        )
+        inner = QVBoxLayout(card)
+        inner.setContentsMargins(20, 14, 20, 14)
+        inner.setSpacing(10)
+
+        title = QLabel("FINAL SELECTED MEMBER")
+        title.setStyleSheet(
+            f"background: transparent; color: {GREEN}; font-family: '{FONT_TITLE}';"
+            " font-size: 12pt; font-weight: 700; letter-spacing: 2px;"
+        )
+
+        self.chip_name = QLabel("")
+        self.chip_weight = QLabel("")
+        self.chip_dcr = QLabel("")
+        self.chip_state = QLabel("")
+
+        chips = QHBoxLayout()
+        chips.setSpacing(8)
+
+        for chip in (self.chip_name, self.chip_weight, self.chip_dcr, self.chip_state):
+            chips.addWidget(chip, 0, Qt.AlignmentFlag.AlignLeft)
+
+        chips.addStretch(1)
+
+        file_caption = QLabel("SAP2000 file")
+        file_caption.setStyleSheet(
+            f"background: transparent; color: {STEEL_DIM}; font-size: 9pt; font-weight: 700;"
+        )
+        self.final_path = ElidedLabel()
+        self.final_path.setStyleSheet(f"background: transparent; color: {STEEL}; font-size: 9.5pt;")
+        self.final_path.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
+        path_row = QHBoxLayout()
+        path_row.setSpacing(10)
+        path_row.addWidget(file_caption)
+        path_row.addWidget(self.final_path, 1)
+
+        inner.addWidget(title)
+        inner.addLayout(chips)
+        inner.addLayout(path_row)
+
+        box.addWidget(card)
+        self.final_box.setVisible(False)
+        return self.final_box
