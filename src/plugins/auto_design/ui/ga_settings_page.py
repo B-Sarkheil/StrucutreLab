@@ -1,6 +1,6 @@
-"""Auto Design - step 4: genetic-algorithm settings and the Simulate Evolution button (it starts the run, steps 5 and on).
+"""Auto Design - step 4.2: genetic-algorithm settings and the Simulate Evolution button (it starts the run, steps 5 and on).
 
-Collects the GA parameters, the "update seismic loads" option and the
+Collects the GA parameters, the
 database folder where the models of every generation are saved. Values
 are validated when the user presses "Simulate Evolution"; on success the
 page emits `run_requested` with an `AutoDesignParams`. Back returns to
@@ -36,7 +36,6 @@ from src.plugins.auto_design.params import AutoDesignParams
 from src.plugins.auto_design.ui.fields import (
     FORM_STYLE,
     Field,
-    FancyCheckBox,
     parse_float,
     parse_int,
 )
@@ -169,12 +168,6 @@ class GASettingsPage(QWidget):
         #grid.addWidget(self.penalizeLevel, 2, 0)
 
         card_layout.addLayout(grid)
-        card_layout.addSpacing(8)
-
-        # Option: update seismic loads (unchecked by default)
-        self.updateSeismicLoads = FancyCheckBox("Update Seismic Loads for Each Offspring")
-        self.updateSeismicLoads.setChecked(False)
-        card_layout.addWidget(self.updateSeismicLoads, 0, Qt.AlignmentFlag.AlignLeft)
 
         # more air between the option and the folder field below it
         card_layout.addSpacing(24)
@@ -360,7 +353,6 @@ class GASettingsPage(QWidget):
                 genSize=gen_size,
                 mutationPercent=mutation_percent,
                 #penalizeLevel=penalize_level,
-                updateSeismicLoads=self.updateSeismicLoads.isChecked(),
                 modelsFolder=models_folder,
             )
         )

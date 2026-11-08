@@ -15,8 +15,8 @@ SAP2000v1.dll is a .NET Framework assembly). It is imported lazily so
 the rest of the application starts without it.
 
 NOTE: the Python binding of `ref` / `out` parameters (see
-`frame_section_names` and `_check_version`) is the part most worth
-verifying against a real SAP2000 installation.
+`frame_section_names`, `load_combination_names` and `_check_version`) is
+the part most worth verifying against a real SAP2000 installation.
 """
 from __future__ import annotations
 
@@ -153,7 +153,24 @@ class SapClient:
             raise SapError("PropFrame.GetNameList failed.")
 
         return [str(name) for name in list(names or [])[: int(count)]]
-    
+
+    def load_combination_names(self) -> list[str]:
+        """Names of all load combinations defined in the open model
+        (`RespCombo.GetNameList`), in the order SAP2000 gives them."""
+
+        result = self.model.RespCombo.GetNameList(0, None)
+
+        # pythonnet returns (ret, NumberNames, MyName) for ref parameters.
+        if not isinstance(result, tuple) or len(result) < 3:
+            raise SapError(f"Unexpected result of RespCombo.GetNameList: {result!r}")
+
+        ret, count, names = result[0], result[1], result[2]
+
+        if ret != 0:
+            raise SapError("RespCombo.GetNameList failed.")
+
+        return [str(name) for name in list(names or [])[: int(count)]]
+
     def unlock_model(self) -> None:
         """Unlock the model so that it can be edited (as in the MATLAB code)."""
 
@@ -216,4 +233,3 @@ class SapClient:
 
     def run_concrete_design(self) -> bool:
         return self.model.DesignConcrete.StartDesign() == 0
-

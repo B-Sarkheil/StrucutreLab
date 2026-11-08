@@ -21,7 +21,7 @@ from collections import Counter
 from dataclasses import dataclass, field, replace
 
 from src.core.sap_client import SapClient
-from src.plugins.auto_design.params import AutoDesignParams, SectionPermission
+from src.plugins.auto_design.params import AutoDesignParams,ConstraintParams, SectionPermission
 from src.plugins.auto_design.services.run_monitor import GenerationStats, RunMonitor
 from src.plugins.auto_design.services.section_materials import read_material_types
 from src.plugins.auto_design.services.frame_assignments import read_frame_sections
@@ -52,7 +52,7 @@ from src.plugins.auto_design.services.database_folder import (
 logger = logging.getLogger(__name__)
 
   # Steps 1-4 are the wizard pages (1 reference file, 2 allowed sections, 3 frame
-  # types, 4 GA settings + the Simulate Evolution button); the run starts at
+  # types, 4.1 constraint settings, 4.2 GA settings + the Simulate Evolution button; the run starts at
   # step 5. The "20" counts the sub-steps too and is only used by the temporary
   # progress estimate; it is not a step number.
 TOTAL_STEPS = 20
@@ -66,6 +66,7 @@ class GAContext:
     sections: list[SectionPermission]
     sapPath: str  # the reference .sdb chosen in step 1
     frameRoles: dict[str, str] = field(default_factory=dict)  # frame -> role (wizard, "Frame types" page)
+    constraints: ConstraintParams | None = None  # constraint settings (wizard, step 4.1)
     frameSections: dict[str, str] = field(default_factory=dict)  # frame -> section (step 6)
     jointCoordinates: dict[str, tuple[float, float, float]] = field(default_factory=dict)  # (step 7)
     frameConnectivity: dict[str, tuple[str, str]] = field(default_factory=dict)  # (step 7)
@@ -80,7 +81,7 @@ class GAContext:
 
 def prepare_database_folder(ctx: GAContext) -> None:
     """Start of the run: clear the database folder (the user has confirmed it
-    in the wizard). It belongs to step 4 (the Simulate Evolution button asks the user to confirm it) and does not count in the progress."""
+    in the wizard). It belongs to step 4.2 (the Simulate Evolution button asks the user to confirm it) and does not count in the progress."""
 
     ctx.monitor.status("Clearing the database folder")
 

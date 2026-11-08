@@ -6,7 +6,12 @@ import logging
 from PySide6.QtWidgets import QMessageBox, QStackedWidget, QWidget
 from PySide6.QtCore import QThread, Signal
 
-from src.plugins.auto_design.params import AutoDesignParams, SectionPermission
+from src.plugins.auto_design.params import (
+    AutoDesignParams,
+    ConstraintParams,
+    SectionPermission,
+)
+from src.plugins.auto_design.ui.constraint_settings_page import ConstraintSettingsPage
 from src.plugins.auto_design.ui.ga_settings_page import GASettingsPage
 from src.plugins.auto_design.ui.page import AutoDesignPage
 from src.plugins.auto_design.ui.roles_page import FrameRolesPage
@@ -67,8 +72,8 @@ class _RunWorker(QThread):
 
 class AutoDesignWizard(QStackedWidget):
     """Step 1: SAP2000 file  ->  Step 2: allowed sections  ->  Step 3: frame types
-    ->  Step 4: GA settings  ->  run page (live progress; Cancel, then Back to the
-    settings)."""
+    ->  Step 4.1: constraint settings  ->  Step 4.2: GA settings  ->  run page
+    (live progress; Cancel, then Back to the settings)."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -79,7 +84,8 @@ class AutoDesignWizard(QStackedWidget):
         self.sap_path: str | None = None
         self.sections: list[SectionPermission] | None = None
         self.frame_roles: dict[str, str] | None = None  # frame -> role, from the Frame types page
-        self.params: AutoDesignParams | None = None
+        self.constraints: ConstraintParams | None = None  # from the Constraint settings page (4.1)
+        self.params: AutoDesignParams | None = None  # from the GA settings page (4.2)
         self.sap = None  # SapClient, set once step 2 has loaded the model
 
         self.context: GAContext | None = None  # result of the last finished run
@@ -88,6 +94,7 @@ class AutoDesignWizard(QStackedWidget):
 
         self._sections_page: SectionsPage | None = None
         self._roles_page: FrameRolesPage | None = None
+        self._constraints_page: ConstraintSettingsPage | None = None
         self._ga_page: GASettingsPage | None = None
         self._run_page: RunPage | None = None
         self._typing_page: TypingPage | None = None
@@ -115,6 +122,7 @@ class AutoDesignWizard(QStackedWidget):
             self.sections = None
             self.sap = None
             self._drop_roles_page()  # the frame types belong to the old file
+            self._drop_constraints_page()  # so do the load combinations
 
             page = SectionsPage(sap_path)
             page.back_requested.connect(lambda: self.setCurrentWidget(self.file_page))
@@ -135,6 +143,14 @@ class AutoDesignWizard(QStackedWidget):
             self._roles_page = None
 
         self.frame_roles = None
+
+    def _drop_constraints_page(self) -> None:
+        if self._constraints_page is not None:
+            self.removeWidget(self._constraints_page)
+            self._constraints_page.deleteLater()
+            self._constraints_page = None
+
+        self.constraints = None
 
     # -----------------------------------------------------------------
     # Step 2 -> 3 (frame types)
@@ -181,7 +197,7 @@ class AutoDesignWizard(QStackedWidget):
             self.setCurrentWidget(self._sections_page)
 
     # -----------------------------------------------------------------
-    # Step 3 -> 4 (GA settings)
+    # Step 3 -> 4.1 (constraint settings)
     # -----------------------------------------------------------------
 
     def _on_roles_accepted(self, roles: dict[str, str]) -> None:
@@ -196,13 +212,58 @@ class AutoDesignWizard(QStackedWidget):
             ),
         )
 
+        self._show_constraints()
+
+    def _show_constraints(self) -> None:
+        # Created once per reference file (the load combinations belong to
+        # it), so the values typed by the user survive Back / Next.
+        if self._constraints_page is None:
+            if self.sap is None or not self.sap_path:
+                logger.error("Cannot show the Constraint settings page: no SAP2000 connection")
+                return
+
+            page = ConstraintSettingsPage(self.sap_path, self.sap)
+            page.back_requested.connect(self._back_to_roles)
+            page.next_requested.connect(self._on_constraints_accepted)
+
+            self._constraints_page = page
+            self.addWidget(page)
+            self.setCurrentWidget(page)
+            page.start_loading()
+            return
+
+        self.setCurrentWidget(self._constraints_page)
+
+    def _back_to_roles(self) -> None:
+        if self._roles_page is not None:
+            self.setCurrentWidget(self._roles_page)
+
+    # -----------------------------------------------------------------
+    # Step 4.1 -> 4.2 (GA settings)
+    # -----------------------------------------------------------------
+
+    def _on_constraints_accepted(self, constraints: ConstraintParams) -> None:
+        self.constraints = constraints
+
+        logger.info(
+            "Constraint settings accepted: DCR goal=%.4g, deflection goal=L/%d, "
+            "element coefficient=%.4g, general coefficient=%.4g, "
+            "deflection combination=%s, update seismic loads=%s",
+            constraints.dcrGoal,
+            constraints.deflectionDivisor,
+            constraints.elementCoefficient,
+            constraints.generalCoefficient,
+            constraints.deflectionCombo,
+            constraints.updateSeismicLoads,
+        )
+
         self._show_ga_settings()
 
     def _show_ga_settings(self) -> None:
         # Created once, so the values typed by the user survive Back / Next.
         if self._ga_page is None:
             page = GASettingsPage(self.sap_path or "")
-            page.back_requested.connect(self._back_to_roles)
+            page.back_requested.connect(self._back_to_constraints)
             page.run_requested.connect(self._on_params_accepted)
 
             self._ga_page = page
@@ -214,12 +275,12 @@ class AutoDesignWizard(QStackedWidget):
 
         self.setCurrentWidget(self._ga_page)
 
-    def _back_to_roles(self) -> None:
-        if self._roles_page is not None:
-            self.setCurrentWidget(self._roles_page)
+    def _back_to_constraints(self) -> None:
+        if self._constraints_page is not None:
+            self.setCurrentWidget(self._constraints_page)
 
     # -----------------------------------------------------------------
-    # Step 4 -> run (steps 5 and on)
+    # Step 4.2 -> run (steps 5 and on)
     # -----------------------------------------------------------------
 
     def _on_params_accepted(self, params: AutoDesignParams) -> None:
@@ -227,14 +288,12 @@ class AutoDesignWizard(QStackedWidget):
 
         logger.info(
             "GA settings accepted: pop=%d, tournament=%d, generations=%d, "
-            "mutation=%.2f%%, "
-            "update seismic loads=%s, models folder=%s",
+            "mutation=%.2f%%, models folder=%s",
             params.popSize,
             params.tournamentSize,
             params.genSize,
             params.mutationPercent,
             #params.penalizeLevel,
-            params.updateSeismicLoads,
             params.modelsFolder,
         )
 
@@ -306,6 +365,7 @@ class AutoDesignWizard(QStackedWidget):
             self.sap is None
             or self.sections is None
             or self.frame_roles is None
+            or self.constraints is None
             or self.params is None
             or not self.sap_path
         ):
@@ -318,6 +378,7 @@ class AutoDesignWizard(QStackedWidget):
             sections=list(self.sections),
             sapPath=self.sap_path,
             frameRoles=dict(self.frame_roles),
+            constraints=self.constraints,
         )
         worker = _RunWorker(context, self)
 
