@@ -1403,6 +1403,7 @@ class RunPage(QWidget):
         self.tile_best = StatTile("Best weight")
         self.tile_change = StatTile("Change in weight")
         self.tile_ratio = StatTile("Mean DCR")
+        self.tile_deflection = StatTile("Mean Deflection")
 
         tiles = QHBoxLayout()
         tiles.setSpacing(12)
@@ -1412,6 +1413,7 @@ class RunPage(QWidget):
             self.tile_best,
             self.tile_change,
             self.tile_ratio,
+            self.tile_deflection,
         ):
             tiles.addWidget(tile, 1)
 
@@ -1529,6 +1531,7 @@ class RunPage(QWidget):
         self.tile_best.set_value("–", WEIGHT_UNIT)
         self.tile_change.set_value("–", "")
         self.tile_ratio.set_value("–", "")
+        self.tile_deflection.set_value("–", "")
 
         self._state = RUNNING
         self._apply_state(RUNNING)
@@ -1564,9 +1567,17 @@ class RunPage(QWidget):
             )
 
         self.tile_ratio.set_value(f"{stats.meanRatio:.3f}", f"max {stats.maxRatio:.3f}")
+        
+        if stats.maxDeflection > 0.0:
+            self.tile_deflection.set_value(
+                f"{stats.meanDeflection:.3f}", f"max {stats.maxDeflection:.3f}"
+            )
+        else:
+            self.tile_deflection.set_value("–", "not used")
 
     def set_final(self, name: str, path: str, weight: float,
-                  max_ratio: float, feasible: bool, cv: float) -> None:
+                  max_ratio: float, feasible: bool, cv: float,
+                  max_deflection: float = 0.0, deflection_used: bool = False) -> None:
         """The selected member of the finished run: its SAP file and numbers."""
 
         self._style_chip(self.chip_name, f"★ {name}", CYAN)
@@ -1574,6 +1585,15 @@ class RunPage(QWidget):
         self._style_chip(
             self.chip_dcr, f"max DCR {max_ratio:.3f}", GREEN if max_ratio <= 1.0 else DANGER
         )
+
+        self.chip_defl.setVisible(deflection_used)
+
+        if deflection_used:
+            self._style_chip(
+                self.chip_defl,
+                f"max Deflection {max_deflection:.3f}",
+                GREEN if max_deflection <= 1.0 else DANGER,
+            )
 
         if feasible:
             self._style_chip(self.chip_state, "✓ All constraints satisfied", GREEN)
@@ -1706,12 +1726,14 @@ class RunPage(QWidget):
         self.chip_name = QLabel("")
         self.chip_weight = QLabel("")
         self.chip_dcr = QLabel("")
+        self.chip_defl = QLabel("")
         self.chip_state = QLabel("")
 
         chips = QHBoxLayout()
         chips.setSpacing(8)
 
-        for chip in (self.chip_name, self.chip_weight, self.chip_dcr, self.chip_state):
+        for chip in (self.chip_name, self.chip_weight, self.chip_dcr,
+                     self.chip_defl, self.chip_state):
             chips.addWidget(chip, 0, Qt.AlignmentFlag.AlignLeft)
 
         chips.addStretch(1)

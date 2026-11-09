@@ -901,20 +901,28 @@ class TypingPage(QWidget):
         tiles.setSpacing(12)
 
         weight = StatTile("Weight")
-        mean_dcr = StatTile("Mean DCR")
-        max_dcr = StatTile("Max DCR")
+        dcr = StatTile("Mean DCR")
+        deflection = StatTile("Mean Deflection")
         change = StatTile("Weight vs reference")
 
         fitness = best.fitness
 
         if isinstance(fitness, Fitness):
             weight.set_value(f"{fitness.weight:,.1f}", "kg")
-            mean_dcr.set_value(f"{fitness.meanRatio:.3f}", f"{fitness.elementCount} elements")
-            max_dcr.set_value(
-                f"{fitness.maxRatio:.3f}",
-                f"stress · max deflection {fitness.maxDeflection:.3f}",
+            dcr.set_value(
+                f"{fitness.meanRatio:.3f}",
+                f"max {fitness.maxRatio:.3f}",
                 GREEN if fitness.maxRatio <= 1.0 else DANGER,
             )
+
+            if fitness.deflectionCount > 0:
+                deflection.set_value(
+                    f"{fitness.meanDeflection:.3f}",
+                    f"max {fitness.maxDeflection:.3f}",
+                    GREEN if fitness.maxDeflection <= 1.0 else DANGER,
+                )
+            else:
+                deflection.set_value("–", "not used")
 
             percent = (
                 weight_change_percent(fitness.weight, reference.weight)
@@ -930,10 +938,10 @@ class TypingPage(QWidget):
                     f"{percent:+.2f} %", f"reference {reference.weight:,.1f} kg", color
                 )
         else:
-            for tile in (weight, mean_dcr, max_dcr, change):
+            for tile in (weight, dcr, deflection, change):
                 tile.set_value("–")
 
-        for tile in (weight, mean_dcr, max_dcr, change):
+        for tile in (weight, dcr, deflection, change):
             tiles.addWidget(tile, 1)
 
         return tiles

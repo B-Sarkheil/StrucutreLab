@@ -418,7 +418,8 @@ class AutoDesignWizard(QStackedWidget):
             best = best_individual(context.population)
             fit = best.fitness
             self._run_page.set_final(
-                best.name, str(best.path), fit.weight, fit.maxRatio, is_feasible(fit), fit.cv
+                best.name, str(best.path), fit.weight, fit.maxRatio, is_feasible(fit), fit.cv,
+                fit.maxDeflection, fit.deflectionCount > 0,
             )
             self._run_page.set_state(FINISHED)
 
