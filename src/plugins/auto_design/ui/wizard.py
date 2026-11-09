@@ -383,7 +383,7 @@ class AutoDesignWizard(QStackedWidget):
         worker = _RunWorker(context, self)
 
         page = self._ensure_run_page()
-        page.start(self.params.genSize)
+        page.start(self.params.genSize, self.constraints.dcrGoal)
 
         worker.status.connect(page.add_status)
         worker.progress.connect(page.set_progress)
@@ -420,6 +420,7 @@ class AutoDesignWizard(QStackedWidget):
             self._run_page.set_final(
                 best.name, str(best.path), fit.weight, fit.maxRatio, is_feasible(fit), fit.cv,
                 fit.maxDeflection, fit.deflectionCount > 0,
+                dcr_goal=context.dcrGoal,
             )
             self._run_page.set_state(FINISHED)
 

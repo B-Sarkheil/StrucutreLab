@@ -909,10 +909,11 @@ class TypingPage(QWidget):
 
         if isinstance(fitness, Fitness):
             weight.set_value(f"{fitness.weight:,.1f}", "kg")
+            goal = self._ctx.dcrGoal
             dcr.set_value(
                 f"{fitness.meanRatio:.3f}",
-                f"max {fitness.maxRatio:.3f}",
-                GREEN if fitness.maxRatio <= 1.0 else DANGER,
+                f"max {fitness.maxRatio:.3f}  (goal {goal:g})",
+                GREEN if fitness.maxRatio <= goal else DANGER,
             )
 
             if fitness.deflectionCount > 0:

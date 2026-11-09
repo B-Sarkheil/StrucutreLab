@@ -557,6 +557,7 @@ class EvolutionChart(QWidget):
         self._stats: list[GenerationStats] = []
         self._total = 1
         self._hover: int | None = None
+        self._dcr_goal = 1.0
 
     # -- data -------------------------------------------------------------
 
@@ -573,6 +574,21 @@ class EvolutionChart(QWidget):
         self._stats = []
         self._hover = None
         self.update()
+
+    def set_dcr_goal(self, goal: float) -> None:
+        """The limit line of the DCR chart is the DCR goal of step 4.1."""
+
+        self._dcr_goal = float(goal)
+        self.update()
+
+    def _limit(self) -> tuple[float | None, str]:
+        """(value, label) of the limit line of the metric shown now."""
+
+        if self._metric.key == "ratio":
+            return self._dcr_goal, f"DCR goal {self._dcr_goal:g}"
+
+        return self._metric.limit, self._metric.limit_label
+
 
     def add(self, stats: GenerationStats) -> None:
         self._stats.append(stats)
@@ -609,8 +625,10 @@ class EvolutionChart(QWidget):
             for series in self._metric.series
         ]
 
-        if self._metric.limit is not None:
-            values.append(self._metric.limit)
+        limit = self._limit()[0]
+
+        if limit is not None:
+            values.append(limit)
 
         if not values:
             return 0.0, 1.0
@@ -728,7 +746,7 @@ class EvolutionChart(QWidget):
             )
 
     def _paint_limit(self, painter: QPainter, plot: QRectF, lo: float, hi: float) -> None:
-        limit = self._metric.limit
+        limit, label = self._limit()
 
         if limit is None or not lo <= limit <= hi:
             return
@@ -747,7 +765,7 @@ class EvolutionChart(QWidget):
         painter.drawText(
             QRectF(plot.right() - 124, y - 17, 118, 14),
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-            self._metric.limit_label,
+            label,
         )
 
     def _points(
@@ -1513,7 +1531,7 @@ class RunPage(QWidget):
 
     # -- feeding the page (called by the wizard) ----------------------------
 
-    def start(self, total_generations: int) -> None:
+    def start(self, total_generations: int, dcr_goal: float = 1.0) -> None:
         """Reset the page for a new run."""
 
         self._total = max(1, int(total_generations))
@@ -1521,6 +1539,7 @@ class RunPage(QWidget):
 
         self.chart.clear()
         self.chart.set_total(self._total)
+        self.chart.set_dcr_goal(dcr_goal)
         self.log.clear_log()
         self.final_box.setVisible(False)
 
@@ -1577,13 +1596,16 @@ class RunPage(QWidget):
 
     def set_final(self, name: str, path: str, weight: float,
                   max_ratio: float, feasible: bool, cv: float,
-                  max_deflection: float = 0.0, deflection_used: bool = False) -> None:
+                  max_deflection: float = 0.0, deflection_used: bool = False,
+                  dcr_goal: float = 1.0) -> None:
         """The selected member of the finished run: its SAP file and numbers."""
 
         self._style_chip(self.chip_name, f"★ {name}", CYAN)
         self._style_chip(self.chip_weight, f"{weight:,.1f} {WEIGHT_UNIT}", AMBER)
         self._style_chip(
-            self.chip_dcr, f"max DCR {max_ratio:.3f}", GREEN if max_ratio <= 1.0 else DANGER
+            self.chip_dcr,
+            f"max DCR {max_ratio:.3f}  (goal {dcr_goal:g})",
+            GREEN if max_ratio <= dcr_goal else DANGER,
         )
 
         self.chip_defl.setVisible(deflection_used)

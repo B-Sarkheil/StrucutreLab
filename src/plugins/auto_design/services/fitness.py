@@ -5,11 +5,13 @@ model and returns a `Fitness`: the weight W and the constraint violation CV.
 
 CV:
 
-    r_i_gov = max_k r_ik                       governing ratio of element i
-                                               (stress, and for beams also deflection)
+    r_i_gov = max(r_i_stress / DCR_goal, r_i_deflection)   governing ratio of element i
+
     v_e = mean_i  max(0, r_i_gov - 1)          element constraints
     v_d = mean_j  max(0, r_j_drift - 1)        global constraints (later drift)
-    CV  = w_e * v_e + w_d * v_d (+ ...)
+
+    CV  = w_e * v_e + w_d * v_d (+ ...)        w_e = Element Constraint Coefficient, w_d = General Constraint Coefficient (step 4.1)
+                                               
 
 The numbers shown to the user are NOT the governing ones: `meanRatio` /
 `maxRatio` are the stress ratios only, `meanDeflection` / `maxDeflection` the
@@ -138,6 +140,7 @@ def fitness_calculator(
     sap_path: Path,
     weights: CvWeights | None = None,
     deflection: DeflectionSettings | None = None,
+    dcr_goal: float = 1.0,
 ) -> Fitness:
     """Evaluate the SAP2000 model at `sap_path` (it is the open model, already saved).
 
@@ -148,6 +151,8 @@ def fitness_calculator(
     """
 
     weights = weights or CvWeights()
+    if not dcr_goal > 0.0:
+        raise ValueError(f"DCR goal must be positive (got {dcr_goal}).")
     use_deflection = deflection is not None and bool(deflection.beams)
 
     if use_deflection:
@@ -169,7 +174,11 @@ def fitness_calculator(
     stress_ratios = read_stress_ratios(sap)
     deflection_ratios = read_deflection_ratios(sap, deflection) if use_deflection else {}
 
-    element_ratios = governing_ratios([stress_ratios, deflection_ratios])
+    # The stress ratio is divided by the DCR goal BEFORE it is compared with the
+    # deflection ratio (whose goal is already L / n, so its limit is 1.0).
+    scaled_stress = {frame: ratio / dcr_goal for frame, ratio in stress_ratios.items()}
+    element_ratios = governing_ratios([scaled_stress, deflection_ratios])
+    
     global_ratios = {name: reader(sap) for name, reader in GLOBAL_CONSTRAINTS.items()}
 
     cv, element_violation, global_violations = compute_cv(element_ratios, global_ratios, weights)

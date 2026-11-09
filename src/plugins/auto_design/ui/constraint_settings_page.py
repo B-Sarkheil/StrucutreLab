@@ -142,7 +142,7 @@ class ConstraintSettingsPage(QWidget):
 
         title = QLabel("Auto Design")
         title.setObjectName("pageTitle")
-        subtitle = QLabel("Constraint settings.")
+        subtitle = QLabel("Constraint settings")
         subtitle.setObjectName("pageSubtitle")
         subtitle.setWordWrap(True)
 

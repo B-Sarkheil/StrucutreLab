@@ -29,7 +29,7 @@ from src.plugins.auto_design.services.model_geometry import (
     read_frame_connectivity,
     read_joint_coordinates,
 )
-from src.plugins.auto_design.services.fitness import fitness_calculator, ranking_key
+from src.plugins.auto_design.services.fitness import CvWeights, fitness_calculator, ranking_key
 from src.plugins.auto_design.services.genetic_operators import (
     random_cut_points,
     select_survivors,
@@ -81,6 +81,8 @@ class GAContext:
     population: list[Individual] = field(default_factory=list)  # generation 1 (step 8)
     referenceFitness: object | None = None  # fitness of the reference file (step 8), for the % change
     deflection: DeflectionSettings | None = None  # beam deflection constraint (step 8), None = off
+    dcrGoal: float = 1.0  # DCR Goal of step 4.1 (stress ratios are divided by it)
+    cvWeights: CvWeights = field(default_factory=CvWeights)  # w_e, w_d of step 4.1
     offspring: list[Individual] = field(default_factory=list)  # children of the current iteration (9.1)
     generation: int = 1  # number of the generation in `population`
     rng: random.Random = field(default_factory=random.Random)
@@ -203,6 +205,39 @@ def _deflection_settings(ctx: GAContext) -> DeflectionSettings | None:
         beams=beams,
     )
 
+def _apply_constraint_settings(ctx: GAContext) -> None:
+    """DCR goal and the CV weights from the constraint settings (step 4.1):
+    Element Constraint Coefficient = w_e, General Constraint Coefficient = w_d."""
+
+    constraints = ctx.constraints
+
+    if constraints is None:
+        return
+
+    ctx.dcrGoal = constraints.dcrGoal
+    ctx.cvWeights = CvWeights(
+        element=constraints.elementCoefficient,
+        globalWeights={"drift": constraints.generalCoefficient},
+    )
+
+    logger.info(
+        "Constraint settings used: DCR goal=%.4g, w_e=%.4g, w_d(drift)=%.4g",
+        ctx.dcrGoal, ctx.cvWeights.element, constraints.generalCoefficient,
+    )
+
+
+def _evaluate(ctx: GAContext, path: Path):
+    """fitness_calculator with all the settings of the run."""
+
+    return fitness_calculator(
+        ctx.sap,
+        path,
+        weights=ctx.cvWeights,
+        deflection=ctx.deflection,
+        dcr_goal=ctx.dcrGoal,
+    )
+
+
 def _member_done(ctx: GAContext) -> None:
     """One member has been evaluated: report the real progress of the run."""
 
@@ -236,7 +271,7 @@ def _make_member(
 
     ctx.monitor.status(f"Generation {generation}: evaluating member {member} of {total}")
     individual = Individual(name, path, genes)
-    individual.fitness = fitness_calculator(ctx.sap, path, deflection=ctx.deflection)
+    individual.fitness = _evaluate(ctx, path)
     _member_done(ctx)
 
     return individual
@@ -289,6 +324,7 @@ def step8_initial_population(ctx: GAContext) -> None:
         )
     
     ctx.deflection = _deflection_settings(ctx)
+    _apply_constraint_settings(ctx)
 
     # Allowed sections do not change between members: compute once, before
     # any folder is created, so a problem stops the run at the start.
@@ -315,7 +351,7 @@ def step8_initial_population(ctx: GAContext) -> None:
     # fitness of the reference member, on its own copy (the original file is never touched)
     ctx.monitor.status(f"Generation 1: evaluating member 1 of {total}")
     ctx.sap.open_model(path)
-    reference.fitness = fitness_calculator(ctx.sap, path, deflection=ctx.deflection)
+    reference.fitness = _evaluate(ctx, path)
     ctx.referenceFitness = reference.fitness
     _member_done(ctx)
 
