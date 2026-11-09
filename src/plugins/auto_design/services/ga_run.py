@@ -47,6 +47,14 @@ from src.plugins.auto_design.services.database_folder import (
     clear_folder,
     copy_member_model,
 )
+from src.plugins.auto_design.services.deflection import DeflectionSettings
+from src.plugins.auto_design.services.population import (
+    BEAM,
+    Individual,
+    build_gene_options,
+    member_name,
+    random_genes,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -72,6 +80,7 @@ class GAContext:
     frameConnectivity: dict[str, tuple[str, str]] = field(default_factory=dict)  # (step 7)
     population: list[Individual] = field(default_factory=list)  # generation 1 (step 8)
     referenceFitness: object | None = None  # fitness of the reference file (step 8), for the % change
+    deflection: DeflectionSettings | None = None  # beam deflection constraint (step 8), None = off
     offspring: list[Individual] = field(default_factory=list)  # children of the current iteration (9.1)
     generation: int = 1  # number of the generation in `population`
     rng: random.Random = field(default_factory=random.Random)
@@ -169,6 +178,31 @@ def step7_geometry(ctx: GAContext) -> None:
         len(ctx.frameConnectivity),
     )
 
+def _deflection_settings(ctx: GAContext) -> DeflectionSettings | None:
+    """Beam deflection constraint from the constraint settings (None = off)."""
+
+    constraints = ctx.constraints
+
+    if constraints is None or not constraints.deflectionCombo:
+        return None
+
+    beams = tuple(f for f in ctx.frameSections if ctx.frameRoles.get(f) == BEAM)
+
+    if not beams:
+        logger.warning("Deflection constraint: the model has no frame of type Beam")
+        return None
+
+    logger.info(
+        "Deflection constraint: combination '%s', L/%d, %d beams",
+        constraints.deflectionCombo, constraints.deflectionDivisor, len(beams),
+    )
+
+    return DeflectionSettings(
+        combo=constraints.deflectionCombo,
+        divisor=constraints.deflectionDivisor,
+        beams=beams,
+    )
+
 def _member_done(ctx: GAContext) -> None:
     """One member has been evaluated: report the real progress of the run."""
 
@@ -202,7 +236,7 @@ def _make_member(
 
     ctx.monitor.status(f"Generation {generation}: evaluating member {member} of {total}")
     individual = Individual(name, path, genes)
-    individual.fitness = fitness_calculator(ctx.sap, path)
+    individual.fitness = fitness_calculator(ctx.sap, path, deflection=ctx.deflection)
     _member_done(ctx)
 
     return individual
@@ -224,6 +258,8 @@ def _report_generation(ctx: GAContext, generation: int) -> None:
             meanWeight=mean_weight,
             meanRatio=best.fitness.meanRatio,
             maxRatio=best.fitness.maxRatio,
+            meanDeflection=best.fitness.meanDeflection,
+            maxDeflection=best.fitness.maxDeflection,
         )
     )
 
@@ -251,6 +287,8 @@ def step8_initial_population(ctx: GAContext) -> None:
             f"{len(missing_roles)} frame(s) have no type from the Frame types page: "
             f"{shown}{more}. Go back and classify the frames again."
         )
+    
+    ctx.deflection = _deflection_settings(ctx)
 
     # Allowed sections do not change between members: compute once, before
     # any folder is created, so a problem stops the run at the start.
@@ -277,7 +315,7 @@ def step8_initial_population(ctx: GAContext) -> None:
     # fitness of the reference member, on its own copy (the original file is never touched)
     ctx.monitor.status(f"Generation 1: evaluating member 1 of {total}")
     ctx.sap.open_model(path)
-    reference.fitness = fitness_calculator(ctx.sap, path)
+    reference.fitness = fitness_calculator(ctx.sap, path, deflection=ctx.deflection)
     ctx.referenceFitness = reference.fitness
     _member_done(ctx)
 

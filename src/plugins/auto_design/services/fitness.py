@@ -3,18 +3,22 @@
 `fitness_calculator` runs the analysis and the design of the open SAP2000
 model and returns a `Fitness`: the weight W and the constraint violation CV.
 
-CV (general form, only the stress ratio is implemented now):
+CV:
 
     r_i_gov = max_k r_ik                       governing ratio of element i
-    v_e = mean_i  max(0, r_i_gov - 1)          element constraints (stress, later deflection)
+                                               (stress, and for beams also deflection)
+    v_e = mean_i  max(0, r_i_gov - 1)          element constraints
     v_d = mean_j  max(0, r_j_drift - 1)        global constraints (later drift)
     CV  = w_e * v_e + w_d * v_d (+ ...)
+
+The numbers shown to the user are NOT the governing ones: `meanRatio` /
+`maxRatio` are the stress ratios only, `meanDeflection` / `maxDeflection` the
+beam deflection ratios only.
 
 To add a constraint:
 
 * element constraint (one ratio per frame): write a reader `f(sap) -> {frame: ratio}`
-  and add it to `ELEMENT_CONSTRAINTS`; all element readers are merged by
-  the max per frame (the governing one);
+  and merge it in `fitness_calculator` with the others (`governing_ratios`);
 * global constraint (one ratio per story, ...): write a reader
   `f(sap) -> [ratio, ...]`, add it to `GLOBAL_CONSTRAINTS` under a name and
   give that name a weight in `CvWeights.globalWeights`.
@@ -32,6 +36,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from src.core.sap_client import SapClient, SapError
+from src.plugins.auto_design.services.deflection import (
+    DeflectionSettings,
+    read_deflection_ratios,
+)
 from src.plugins.auto_design.services.design_results import (
     read_stress_ratios,
     read_total_weight,
@@ -42,12 +50,9 @@ logger = logging.getLogger(__name__)
 # A member with CV not larger than this is feasible.
 CV_EPSILON = 1e-6
 
-# frame -> ratio
-ElementReader = Callable[[SapClient], dict[str, float]]
 # list of ratios (one per story, joint, ...)
 GlobalReader = Callable[[SapClient], list[float]]
 
-ELEMENT_CONSTRAINTS: tuple[ElementReader, ...] = (read_stress_ratios,)
 GLOBAL_CONSTRAINTS: dict[str, GlobalReader] = {}  # for example {"drift": read_drift_ratios}
 
 
@@ -68,9 +73,12 @@ class Fitness:
     cv: float  # constraint violation, 0 = no violation
     elementViolation: float  # v_e
     globalViolations: dict[str, float]  # name -> v of every global constraint
-    meanRatio: float  # mean of the governing element ratios
-    maxRatio: float  # largest governing element ratio
-    elementCount: int  # n_e
+    meanRatio: float  # mean STRESS ratio of the frames
+    maxRatio: float  # largest STRESS ratio
+    elementCount: int  # number of frames with a stress ratio
+    meanDeflection: float = 0.0  # mean deflection ratio of the beams (0 = not used)
+    maxDeflection: float = 0.0  # largest deflection ratio of the beams
+    deflectionCount: int = 0  # number of beams with a deflection ratio
 
 
 # ---------------------------------------------------------------------
@@ -126,15 +134,27 @@ def compute_cv(
 
 
 def fitness_calculator(
-    sap: SapClient, sap_path: Path, weights: CvWeights | None = None
+    sap: SapClient,
+    sap_path: Path,
+    weights: CvWeights | None = None,
+    deflection: DeflectionSettings | None = None,
 ) -> Fitness:
     """Evaluate the SAP2000 model at `sap_path` (it is the open model, already saved).
 
     Runs the analysis and the steel and concrete design, reads W and CV,
-    and saves the model again so the file keeps the results.
+    and saves the model again so the file keeps the results. With
+    `deflection` the beams also get a deflection ratio (the output stations
+    of the beams are set first; this needs the model unlocked).
     """
 
     weights = weights or CvWeights()
+    use_deflection = deflection is not None and bool(deflection.beams)
+
+    if use_deflection:
+        sap.unlock_model()
+
+        for beam in deflection.beams:
+            sap.set_output_stations(beam, deflection.segments)
 
     sap.run_analysis()  # raises SapError when it fails
 
@@ -146,7 +166,10 @@ def fitness_calculator(
 
     weight = read_total_weight(sap)
 
-    element_ratios = governing_ratios(reader(sap) for reader in ELEMENT_CONSTRAINTS)
+    stress_ratios = read_stress_ratios(sap)
+    deflection_ratios = read_deflection_ratios(sap, deflection) if use_deflection else {}
+
+    element_ratios = governing_ratios([stress_ratios, deflection_ratios])
     global_ratios = {name: reader(sap) for name, reader in GLOBAL_CONSTRAINTS.items()}
 
     cv, element_violation, global_violations = compute_cv(element_ratios, global_ratios, weights)
@@ -154,22 +177,27 @@ def fitness_calculator(
     if not (math.isfinite(weight) and math.isfinite(cv)):
         raise SapError(f"Weight or CV is not a finite number (W={weight}, CV={cv}).")
 
-    ratios = list(element_ratios.values())
+    stress = list(stress_ratios.values())
+    bending = list(deflection_ratios.values())
+
     fitness = Fitness(
         weight=weight,
         cv=cv,
         elementViolation=element_violation,
         globalViolations=global_violations,
-        meanRatio=sum(ratios) / len(ratios) if ratios else 0.0,
-        maxRatio=max(ratios, default=0.0),
-        elementCount=len(ratios),
+        meanRatio=sum(stress) / len(stress) if stress else 0.0,
+        maxRatio=max(stress, default=0.0),
+        elementCount=len(stress),
+        meanDeflection=sum(bending) / len(bending) if bending else 0.0,
+        maxDeflection=max(bending, default=0.0),
+        deflectionCount=len(bending),
     )
 
     sap.save_model_as(sap_path)  # keep the analysis and design results in the file
 
     logger.info(
-        "Fitness %s: W=%.6g, CV=%.6g, max ratio %.3f", Path(sap_path).name,
-        fitness.weight, fitness.cv, fitness.maxRatio,
+        "Fitness %s: W=%.6g, CV=%.6g, max stress %.3f, max deflection %.3f",
+        Path(sap_path).name, fitness.weight, fitness.cv, fitness.maxRatio, fitness.maxDeflection,
     )
 
     return fitness

@@ -652,7 +652,7 @@ class TypingPage(QWidget):
         if isinstance(fitness, Fitness) and not is_feasible(fitness):
             warning = QLabel(
                 "This member still violates the constraints "
-                f"(CV = {fitness.cv:.4g}); its maximum DCR is above 1.0."
+                f"(CV = {fitness.cv:.4g})."
             )
             warning.setObjectName("typeWarning")
             warning.setWordWrap(True)
@@ -912,7 +912,7 @@ class TypingPage(QWidget):
             mean_dcr.set_value(f"{fitness.meanRatio:.3f}", f"{fitness.elementCount} elements")
             max_dcr.set_value(
                 f"{fitness.maxRatio:.3f}",
-                "limit 1.0",
+                f"stress · max deflection {fitness.maxDeflection:.3f}",
                 GREEN if fitness.maxRatio <= 1.0 else DANGER,
             )
 

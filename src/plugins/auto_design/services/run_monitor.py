@@ -29,14 +29,16 @@ class RunCancelled(Exception):
 class GenerationStats:
     """The numbers of one generation, shown by the run page.
 
-    Generation 0 is the initial population (the reference structure).
+    Generation 1 is the initial population (the reference structure).
     """
 
     generation: int
     bestWeight: float  # weight of the best structure of the generation
     meanWeight: float  # mean weight of the whole population
-    meanRatio: float  # mean DCR of the members of the best structure
-    maxRatio: float  # largest DCR in the best structure (limit is 1.0)
+    meanRatio: float  # mean STRESS ratio of the frames of the best structure
+    maxRatio: float  # largest STRESS ratio in the best structure (limit is 1.0)
+    meanDeflection: float = 0.0  # mean deflection ratio of the beams of the best structure
+    maxDeflection: float = 0.0  # largest deflection ratio (limit is 1.0)
 
 
 def _ignore(*_args) -> None:

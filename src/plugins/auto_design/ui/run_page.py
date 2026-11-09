@@ -509,12 +509,25 @@ METRICS = (
     MetricSpec(
         key="ratio",
         button="DCR",
-        heading="Demand / capacity ratio of the members",
+        heading="Demand / capacity ratio of the best structure",
         unit="",
         decimals=3,
         series=(
             SeriesSpec("Mean", "meanRatio", CYAN),
             SeriesSpec("Maximum", "maxRatio", VIOLET),
+        ),
+        limit=1.0,
+        limit_label="Limit 1.0",
+    ),
+    MetricSpec(
+        key="deflection",
+        button="Deflection",
+        heading="Beam deflection ratio of the best structure",
+        unit="",
+        decimals=3,
+        series=(
+            SeriesSpec("Mean", "meanDeflection", CYAN),
+            SeriesSpec("Maximum", "maxDeflection", VIOLET),
         ),
         limit=1.0,
         limit_label="Limit 1.0",

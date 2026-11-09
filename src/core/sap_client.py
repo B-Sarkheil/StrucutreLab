@@ -233,3 +233,95 @@ class SapClient:
 
     def run_concrete_design(self) -> bool:
         return self.model.DesignConcrete.StartDesign() == 0
+
+        # -----------------------------------------------------------------
+    # Output selection and frame forces (beam deflection constraint)
+    # -----------------------------------------------------------------
+
+    def deselect_all_for_output(self) -> None:
+        if self.model.Results.Setup.DeselectAllCasesAndCombosForOutput() != 0:
+            raise SapError("Could not clear the output selection of SAP2000.")
+
+    def select_combo_for_output(self, name: str) -> None:
+        if self.model.Results.Setup.SetComboSelectedForOutput(name) != 0:
+            raise SapError(f"Could not select the combination '{name}' for output.")
+
+    def select_case_for_output(self, name: str) -> None:
+        if self.model.Results.Setup.SetCaseSelectedForOutput(name) != 0:
+            raise SapError(f"Could not select the load case '{name}' for output.")
+
+    def combo_members(self, name: str) -> list[tuple[bool, str]]:
+        """Members of a combination: (is_combination, name) pairs."""
+
+        result = self.model.RespCombo.GetCaseList(name, 0, None, None, None)
+
+        # (ret, NumberItems, CNameType, CName, SF)
+        if not isinstance(result, tuple) or len(result) < 5:
+            raise SapError(f"Unexpected result of RespCombo.GetCaseList: {result!r}")
+
+        ret, count, kinds, names = result[0], int(result[1]), result[2], result[3]
+
+        if ret != 0:
+            raise SapError(f"RespCombo.GetCaseList failed for '{name}'.")
+
+        combo_value = int(self.api.eCNameType.LoadCombo)
+
+        return [
+            (int(kind) == combo_value, str(member))
+            for kind, member in zip(list(kinds or [])[:count], list(names or [])[:count])
+        ]
+
+    def set_output_stations(self, frame: str, min_segments: int) -> None:
+        """At least `min_segments` output segments on one frame (needs an
+        unlocked model; it is kept in the file)."""
+
+        ret = self.model.FrameObj.SetOutputStations(
+            frame, 2, 0.0, int(min_segments), False, False, self.api.eItemType.Objects
+        )
+
+        if ret != 0:
+            raise SapError(f"Could not set the output stations of frame '{frame}'.")
+
+    def frame_moments(self, frame: str) -> list[tuple[str, str, float, float]]:
+        """(load case / combination, step type, station, M3) of every output
+        station of one frame, for the cases selected for output."""
+
+        result = self.model.Results.FrameForce(
+            frame, self.api.eItemTypeElm.ObjectElm, 0,
+            None, None, None, None, None, None, None, None, None, None, None, None, None,
+        )
+
+        # (ret, NumberResults, Obj, ObjSta, Elm, ElmSta, LoadCase, StepType,
+        #  StepNum, P, V2, V3, T, M2, M3)
+        if not isinstance(result, tuple) or len(result) != 15:
+            raise SapError(f"Unexpected result of Results.FrameForce: {result!r}")
+
+        if result[0] != 0:
+            raise SapError(f"Results.FrameForce failed for frame '{frame}'.")
+
+        count = int(result[1])
+        stations, cases, steps, moments = (
+            list(result[index] or [])[:count] for index in (3, 6, 7, 14)
+        )
+
+        return [
+            (str(case), str(step), float(sta), float(m))
+            for case, step, sta, m in zip(cases, steps, stations, moments)
+        ]
+
+    def frame_i33_modifier(self, frame: str) -> float:
+        """I33 property modifier assigned to one frame (1.0 when it cannot be read).
+        FrameObj.GetModifiers gives 8 values: Area, As2, As3, Torsion, I22, I33, Mass, Weight."""
+
+        try:
+            result = self.model.FrameObj.GetModifiers(frame, None, self.api.eItemType.Objects)
+
+            if isinstance(result, tuple) and result[0] == 0:
+                values = list(result[1] or [])
+
+                if len(values) >= 6 and float(values[5]) > 0.0:
+                    return float(values[5])
+        except Exception:
+            logger.debug("GetModifiers failed for '%s'", frame, exc_info=True)
+
+        return 1.0
