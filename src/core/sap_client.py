@@ -325,3 +325,20 @@ class SapClient:
             logger.debug("GetModifiers failed for '%s'", frame, exc_info=True)
 
         return 1.0
+
+    def section_i33_modifier(self, section: str) -> float:
+        """I33 property modifier defined in the frame SECTION (1.0 when it cannot be read).
+        PropFrame.GetModifiers gives 8 values: Area, As2, As3, Torsion, I22, I33, Mass, Weight."""
+
+        try:
+            result = self.model.PropFrame.GetModifiers(section, None)
+
+            if isinstance(result, tuple) and result[0] == 0:
+                values = list(result[1] or [])
+
+                if len(values) >= 6 and float(values[5]) > 0.0:
+                    return float(values[5])
+        except Exception:
+            logger.warning("PropFrame.GetModifiers failed for section '%s'", section, exc_info=True)
+
+        return 1.0

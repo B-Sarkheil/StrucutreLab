@@ -192,7 +192,11 @@ def read_beam_stiffness(
             _warn(settings, f"beam '{frame}' (section '{section}'): no E or I33, skipped")
             continue
 
-        result[frame] = young * inertia * client.frame_i33_modifier(frame)
+        result[frame] = (
+            young * inertia
+            * client.section_i33_modifier(section)
+            * client.frame_i33_modifier(frame)
+        )
 
     return result
 
