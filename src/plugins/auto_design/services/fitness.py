@@ -10,7 +10,7 @@ CV:
     v_e = mean_i  max(0, r_i_gov - 1)          element constraints
     v_d = mean_j  max(0, r_j_drift - 1)        global constraints (later drift)
 
-    CV  = w_e * v_e + w_d * v_d (+ ...)        w_e = Element Constraint Coefficient, w_d = General Constraint Coefficient (step 4.1)
+    CV  = w_e * v_e + w_d * v_d (+ ...)        w_e = Element Constraint Coefficient, w_d = General Constraint Coefficient (step 4.2)
                                                
 
 The numbers shown to the user are NOT the governing ones: `meanRatio` /

@@ -13,6 +13,7 @@ from src.plugins.auto_design.params import (
 )
 from src.plugins.auto_design.ui.constraint_settings_page import ConstraintSettingsPage
 from src.plugins.auto_design.ui.ga_settings_page import GASettingsPage
+from src.plugins.auto_design.ui.links_page import FrameLinksPage
 from src.plugins.auto_design.ui.page import AutoDesignPage
 from src.plugins.auto_design.ui.roles_page import FrameRolesPage
 from src.plugins.auto_design.ui.run_page import (
@@ -72,8 +73,8 @@ class _RunWorker(QThread):
 
 class AutoDesignWizard(QStackedWidget):
     """Step 1: SAP2000 file  ->  Step 2: allowed sections  ->  Step 3: frame types
-    ->  Step 4.1: constraint settings  ->  Step 4.2: GA settings  ->  run page
-    (live progress; Cancel, then Back to the settings)."""
+    ->  Step 4.1: linked frames  ->  Step 4.2: constraint settings  ->  Step 4.3: GA settings
+    ->  run page (live progress; Cancel, then Back to the settings)  ->  step 10: typing page."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -84,8 +85,9 @@ class AutoDesignWizard(QStackedWidget):
         self.sap_path: str | None = None
         self.sections: list[SectionPermission] | None = None
         self.frame_roles: dict[str, str] | None = None  # frame -> role, from the Frame types page
-        self.constraints: ConstraintParams | None = None  # from the Constraint settings page (4.1)
-        self.params: AutoDesignParams | None = None  # from the GA settings page (4.2)
+        self.frame_links: list[tuple[str, ...]] | None = None  # groups of linked frames (step 4.1), [] = none
+        self.constraints: ConstraintParams | None = None  # from the Constraint settings page (4.2)
+        self.params: AutoDesignParams | None = None  # from the GA settings page (4.3)
         self.sap = None  # SapClient, set once step 2 has loaded the model
 
         self.context: GAContext | None = None  # result of the last finished run
@@ -94,6 +96,7 @@ class AutoDesignWizard(QStackedWidget):
 
         self._sections_page: SectionsPage | None = None
         self._roles_page: FrameRolesPage | None = None
+        self._links_page: FrameLinksPage | None = None
         self._constraints_page: ConstraintSettingsPage | None = None
         self._ga_page: GASettingsPage | None = None
         self._run_page: RunPage | None = None
@@ -122,6 +125,7 @@ class AutoDesignWizard(QStackedWidget):
             self.sections = None
             self.sap = None
             self._drop_roles_page()  # the frame types belong to the old file
+            self._drop_links_page()  # so do the linked frames
             self._drop_constraints_page()  # so do the load combinations
 
             page = SectionsPage(sap_path)
@@ -143,6 +147,14 @@ class AutoDesignWizard(QStackedWidget):
             self._roles_page = None
 
         self.frame_roles = None
+
+    def _drop_links_page(self) -> None:
+        if self._links_page is not None:
+            self.removeWidget(self._links_page)
+            self._links_page.deleteLater()
+            self._links_page = None
+
+        self.frame_links = None
 
     def _drop_constraints_page(self) -> None:
         if self._constraints_page is not None:
@@ -197,7 +209,7 @@ class AutoDesignWizard(QStackedWidget):
             self.setCurrentWidget(self._sections_page)
 
     # -----------------------------------------------------------------
-    # Step 3 -> 4.1 (constraint settings)
+    # Step 3 -> 4.1 (linked frames)
     # -----------------------------------------------------------------
 
     def _on_roles_accepted(self, roles: dict[str, str]) -> None:
@@ -212,6 +224,52 @@ class AutoDesignWizard(QStackedWidget):
             ),
         )
 
+        self._show_links()
+
+    def _show_links(self) -> None:
+        # Created once per reference file, so the groups made by the user
+        # survive Back / Next. The types shown in its table are refreshed
+        # every time (the user may have edited them on the previous page).
+        if self.frame_roles is None:
+            logger.error("Cannot show the Linked frames page: no frame types")
+            return
+
+        if self._links_page is None:
+            if self.sap is None or not self.sap_path:
+                logger.error("Cannot show the Linked frames page: no SAP2000 connection")
+                return
+
+            page = FrameLinksPage(self.sap_path, self.sap)
+            page.set_roles(self.frame_roles)
+            page.back_requested.connect(self._back_to_roles)
+            page.next_requested.connect(self._on_links_accepted)
+
+            self._links_page = page
+            self.addWidget(page)
+            self.setCurrentWidget(page)
+            page.start_loading()
+            return
+
+        self._links_page.set_roles(self.frame_roles)
+        self.setCurrentWidget(self._links_page)
+
+    def _back_to_roles(self) -> None:
+        if self._roles_page is not None:
+            self.setCurrentWidget(self._roles_page)
+
+    # -----------------------------------------------------------------
+    # Step 4.1 -> 4.2 (constraint settings)
+    # -----------------------------------------------------------------
+
+    def _on_links_accepted(self, links: list) -> None:
+        self.frame_links = [tuple(group) for group in links]
+
+        logger.info(
+            "Linked frames accepted: %d groups, %d linked frames",
+            len(self.frame_links),
+            sum(len(group) for group in self.frame_links),
+        )
+
         self._show_constraints()
 
     def _show_constraints(self) -> None:
@@ -223,7 +281,7 @@ class AutoDesignWizard(QStackedWidget):
                 return
 
             page = ConstraintSettingsPage(self.sap_path, self.sap)
-            page.back_requested.connect(self._back_to_roles)
+            page.back_requested.connect(self._back_to_links)
             page.next_requested.connect(self._on_constraints_accepted)
 
             self._constraints_page = page
@@ -234,12 +292,12 @@ class AutoDesignWizard(QStackedWidget):
 
         self.setCurrentWidget(self._constraints_page)
 
-    def _back_to_roles(self) -> None:
-        if self._roles_page is not None:
-            self.setCurrentWidget(self._roles_page)
+    def _back_to_links(self) -> None:
+        if self._links_page is not None:
+            self.setCurrentWidget(self._links_page)
 
     # -----------------------------------------------------------------
-    # Step 4.1 -> 4.2 (GA settings)
+    # Step 4.2 -> 4.3 (GA settings)
     # -----------------------------------------------------------------
 
     def _on_constraints_accepted(self, constraints: ConstraintParams) -> None:
@@ -280,7 +338,7 @@ class AutoDesignWizard(QStackedWidget):
             self.setCurrentWidget(self._constraints_page)
 
     # -----------------------------------------------------------------
-    # Step 4.2 -> run (steps 5 and on)
+    # Step 4.3 -> run (steps 5 and on)
     # -----------------------------------------------------------------
 
     def _on_params_accepted(self, params: AutoDesignParams) -> None:
@@ -293,7 +351,6 @@ class AutoDesignWizard(QStackedWidget):
             params.tournamentSize,
             params.genSize,
             params.mutationPercent,
-            #params.penalizeLevel,
             params.modelsFolder,
         )
 
@@ -365,6 +422,7 @@ class AutoDesignWizard(QStackedWidget):
             self.sap is None
             or self.sections is None
             or self.frame_roles is None
+            or self.frame_links is None
             or self.constraints is None
             or self.params is None
             or not self.sap_path
@@ -378,6 +436,7 @@ class AutoDesignWizard(QStackedWidget):
             sections=list(self.sections),
             sapPath=self.sap_path,
             frameRoles=dict(self.frame_roles),
+            frameLinks=[tuple(group) for group in self.frame_links],
             constraints=self.constraints,
         )
         worker = _RunWorker(context, self)

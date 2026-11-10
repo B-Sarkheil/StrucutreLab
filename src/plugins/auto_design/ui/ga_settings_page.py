@@ -1,4 +1,4 @@
-"""Auto Design - step 4.2: genetic-algorithm settings and the Simulate Evolution button (it starts the run, steps 5 and on).
+"""Auto Design - step 4.3: genetic-algorithm settings and the Simulate Evolution button (it starts the run, steps 5 and on).
 
 Collects the GA parameters, the
 database folder where the models of every generation are saved. Values

@@ -576,7 +576,7 @@ class EvolutionChart(QWidget):
         self.update()
 
     def set_dcr_goal(self, goal: float) -> None:
-        """The limit line of the DCR chart is the DCR goal of step 4.1."""
+        """The limit line of the DCR chart is the DCR goal of step 4.2."""
 
         self._dcr_goal = float(goal)
         self.update()

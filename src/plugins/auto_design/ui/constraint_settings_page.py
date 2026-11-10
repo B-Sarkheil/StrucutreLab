@@ -1,5 +1,5 @@
-"""Auto Design - step 4.1: Constraint settings (after the Frame types page, step 3;
-the GA settings page, step 4.2, follows).
+"""Auto Design - step 4.2: Constraint settings (after the Frame types page, step 3;
+the GA settings page, step 4.3, follows).
 
 Collects the constraint settings of the run:
 

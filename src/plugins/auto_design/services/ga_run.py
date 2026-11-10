@@ -6,10 +6,17 @@ in a worker thread (see `ui/wizard.py`).
 
 Reporting: every step announces what it is doing with
 `ctx.monitor.status(...)` (shown on the run page, and a point where the
-user's Cancel takes effect), and `run_ga` reports the estimated progress
-after every step. The estimate is temporary: it counts finished steps out
-of `TOTAL_STEPS`; the final way of computing it comes when the whole
-algorithm exists.
+user's Cancel takes effect). The progress is real and counted in members
+(`ctx.totalMembers`, `ctx.doneMembers`, `_member_done`).
+
+Steps 1-4 are the wizard pages (1 reference file, 2 allowed sections, 3 frame
+types, 4.1 linked frames, 4.2 constraint settings, 4.3 GA settings + the
+Simulate Evolution button); the run starts at step 5.
+
+Linked frames (step 4.1): frames of one group share ONE gene. The DNA is a
+list of units (`ctx.units`, see `gene_groups.py`): random members and the
+crossover work on units, and the reference model (member 1) is repaired so
+that it respects the links.
 """
 from __future__ import annotations
 
@@ -21,26 +28,27 @@ from collections import Counter
 from dataclasses import dataclass, field, replace
 
 from src.core.sap_client import SapClient
-from src.plugins.auto_design.params import AutoDesignParams,ConstraintParams, SectionPermission
+from src.plugins.auto_design.params import AutoDesignParams, ConstraintParams, SectionPermission
 from src.plugins.auto_design.services.run_monitor import GenerationStats, RunMonitor
 from src.plugins.auto_design.services.section_materials import read_material_types
+from src.plugins.auto_design.services.section_areas import read_section_areas
 from src.plugins.auto_design.services.frame_assignments import read_frame_sections
 from src.plugins.auto_design.services.model_geometry import (
     read_frame_connectivity,
     read_joint_coordinates,
 )
 from src.plugins.auto_design.services.fitness import CvWeights, fitness_calculator, ranking_key
+from src.plugins.auto_design.services.gene_groups import (
+    build_units,
+    random_unit_genes,
+    repair_genes,
+    unit_options,
+)
 from src.plugins.auto_design.services.genetic_operators import (
     random_cut_points,
     select_survivors,
     three_point_crossover,
     tournament_parents,
-)
-from src.plugins.auto_design.services.population import (
-    Individual,
-    build_gene_options,
-    member_name,
-    random_genes,
 )
 from src.plugins.auto_design.services.database_folder import (
     check_folder_usable,
@@ -53,16 +61,12 @@ from src.plugins.auto_design.services.population import (
     Individual,
     build_gene_options,
     member_name,
-    random_genes,
 )
 
 
 logger = logging.getLogger(__name__)
 
-  # Steps 1-4 are the wizard pages (1 reference file, 2 allowed sections, 3 frame
-  # types, 4.1 constraint settings, 4.2 GA settings + the Simulate Evolution button; the run starts at
-  # step 5. The "20" counts the sub-steps too and is only used by the temporary
-  # progress estimate; it is not a step number.
+# Left over from the old progress estimate (not used any more).
 TOTAL_STEPS = 20
 FIRST_RUN_STEP = 5
 
@@ -74,16 +78,18 @@ class GAContext:
     sections: list[SectionPermission]
     sapPath: str  # the reference .sdb chosen in step 1
     frameRoles: dict[str, str] = field(default_factory=dict)  # frame -> role (wizard, "Frame types" page)
-    constraints: ConstraintParams | None = None  # constraint settings (wizard, step 4.1)
+    frameLinks: list[tuple[str, ...]] = field(default_factory=list)  # linked frames (wizard, step 4.1)
+    constraints: ConstraintParams | None = None  # constraint settings (wizard, step 4.2)
     frameSections: dict[str, str] = field(default_factory=dict)  # frame -> section (step 6)
     jointCoordinates: dict[str, tuple[float, float, float]] = field(default_factory=dict)  # (step 7)
     frameConnectivity: dict[str, tuple[str, str]] = field(default_factory=dict)  # (step 7)
+    units: list[tuple[str, ...]] = field(default_factory=list)  # the DNA: frames that share a gene (step 8)
     population: list[Individual] = field(default_factory=list)  # generation 1 (step 8)
-    referenceFitness: object | None = None  # fitness of the reference file (step 8), for the % change
-        firstBestFitness: object | None = None  # fitness of the best member of generation 1 (end of step 8), for the % change of step 10
+    referenceFitness: object | None = None  # fitness of member 1 of generation 1 (step 8; not used by the pages)
+    firstBestFitness: object | None = None  # fitness of the best member of generation 1 (end of step 8), for the % change
     deflection: DeflectionSettings | None = None  # beam deflection constraint (step 8), None = off
-    dcrGoal: float = 1.0  # DCR Goal of step 4.1 (stress ratios are divided by it)
-    cvWeights: CvWeights = field(default_factory=CvWeights)  # w_e, w_d of step 4.1
+    dcrGoal: float = 1.0  # DCR Goal of step 4.2 (stress ratios are divided by it)
+    cvWeights: CvWeights = field(default_factory=CvWeights)  # w_e, w_d of step 4.2
     offspring: list[Individual] = field(default_factory=list)  # children of the current iteration (9.1)
     generation: int = 1  # number of the generation in `population`
     rng: random.Random = field(default_factory=random.Random)
@@ -91,9 +97,10 @@ class GAContext:
     totalMembers: int = 0  # members to evaluate in the whole run (step 8 + step 9)
     doneMembers: int = 0  # members evaluated so far (progress)
 
+
 def prepare_database_folder(ctx: GAContext) -> None:
     """Start of the run: clear the database folder (the user has confirmed it
-    in the wizard). It belongs to step 4.2 (the Simulate Evolution button asks the user to confirm it) and does not count in the progress."""
+    in the wizard). It belongs to step 4.3 (the Simulate Evolution button asks the user to confirm it) and does not count in the progress."""
 
     ctx.monitor.status("Clearing the database folder")
 
@@ -181,6 +188,7 @@ def step7_geometry(ctx: GAContext) -> None:
         len(ctx.frameConnectivity),
     )
 
+
 def _deflection_settings(ctx: GAContext) -> DeflectionSettings | None:
     """Beam deflection constraint from the constraint settings (None = off)."""
 
@@ -206,8 +214,9 @@ def _deflection_settings(ctx: GAContext) -> DeflectionSettings | None:
         beams=beams,
     )
 
+
 def _apply_constraint_settings(ctx: GAContext) -> None:
-    """DCR goal and the CV weights from the constraint settings (step 4.1):
+    """DCR goal and the CV weights from the constraint settings (step 4.2):
     Element Constraint Coefficient = w_e, General Constraint Coefficient = w_d."""
 
     constraints = ctx.constraints
@@ -245,6 +254,7 @@ def _member_done(ctx: GAContext) -> None:
     ctx.doneMembers += 1
     ctx.monitor.progress(ctx.doneMembers / max(1, ctx.totalMembers))
 
+
 def _make_member(
     ctx: GAContext, generation: int, member: int, total: int, genes: dict[str, str]
 ) -> Individual:
@@ -277,6 +287,7 @@ def _make_member(
 
     return individual
 
+
 def _report_generation(ctx: GAContext, generation: int) -> None:
     """Send the numbers of the current population to the run page
     (generation 1 = the initial population)."""
@@ -301,7 +312,13 @@ def _report_generation(ctx: GAContext, generation: int) -> None:
 
 
 def step8_initial_population(ctx: GAContext) -> None:
-    """Step 8: build the first generation (reference model + random members)."""
+    """Step 8: build the first generation (reference model + random members).
+
+    Member 1 is the reference model; when frames are linked (step 4.1) and
+    the reference gives them different sections, member 1 is the REPAIRED
+    reference (the largest section of every group is given to the whole
+    group). The other members get one random section per unit.
+    """
 
     # Final size is always even (members are paired later).
     total = ctx.params.popSize + ctx.params.popSize % 2
@@ -323,7 +340,7 @@ def step8_initial_population(ctx: GAContext) -> None:
             f"{len(missing_roles)} frame(s) have no type from the Frame types page: "
             f"{shown}{more}. Go back and classify the frames again."
         )
-    
+
     ctx.deflection = _deflection_settings(ctx)
     _apply_constraint_settings(ctx)
 
@@ -333,43 +350,73 @@ def step8_initial_population(ctx: GAContext) -> None:
 
     options = build_gene_options(ctx.frameSections, ctx.frameRoles, ctx.sections)
 
+    # The DNA: one unit per group of linked frames, one per other frame.
+    ctx.units = build_units(ctx.frameSections, ctx.frameLinks)
+    unit_choices = unit_options(ctx.units, options)
+    linked_frames = sum(len(unit) for unit in ctx.units if len(unit) > 1)
+
+    logger.info(
+        "Step 8 - DNA: %d frames in %d genes (%d groups of linked frames, %d linked frames)",
+        len(ctx.frameSections),
+        len(ctx.units),
+        sum(len(unit) > 1 for unit in ctx.units),
+        linked_frames,
+    )
+
+    # Member 1: the reference model, repaired when the links ask for it.
+    reference_genes = dict(ctx.frameSections)
+
+    if linked_frames:
+        ctx.monitor.status("Linked frames: giving the same section to every group of the reference model")
+        areas = read_section_areas(ctx.sap)
+        reference_genes = repair_genes(reference_genes, ctx.units, unit_choices, areas)
+
+    repaired = reference_genes != ctx.frameSections
+
     # 8.1  Generation-1 / Gen-1-1 with a copy of the reference file
     generation_dir = Path(ctx.params.modelsFolder) / "Generation-1"
     ctx.population = []
     ctx.generation = 1
 
-    ctx.monitor.status(f"Generation 1: copying the reference model (member 1 of {total})")
+    if repaired:
+        changed = sum(reference_genes[f] != ctx.frameSections[f] for f in reference_genes)
+        logger.info("Step 8 - the reference model was repaired: %d frames changed", changed)
+        ctx.monitor.status(f"Generation 1: building the repaired reference model (member 1 of {total})")
+        reference = _make_member(ctx, 1, 1, total, reference_genes)
+    else:
+        ctx.monitor.status(f"Generation 1: copying the reference model (member 1 of {total})")
 
-    name = member_name(1, 1)
-    folder = generation_dir / name
-    folder.mkdir(parents=True, exist_ok=True)
-    path = folder / f"{name}.sdb"
-    shutil.copy2(ctx.sapPath, path)
+        name = member_name(1, 1)
+        folder = generation_dir / name
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"{name}.sdb"
+        shutil.copy2(ctx.sapPath, path)
 
-    reference = Individual(name, path, dict(ctx.frameSections))
+        reference = Individual(name, path, dict(ctx.frameSections))
+
+        # fitness of the reference member, on its own copy (the original file is never touched)
+        ctx.monitor.status(f"Generation 1: evaluating member 1 of {total}")
+        ctx.sap.open_model(path)
+        reference.fitness = _evaluate(ctx, path)
+        _member_done(ctx)
+
     ctx.population.append(reference)
-
-    # fitness of the reference member, on its own copy (the original file is never touched)
-    ctx.monitor.status(f"Generation 1: evaluating member 1 of {total}")
-    ctx.sap.open_model(path)
-    reference.fitness = _evaluate(ctx, path)
     ctx.referenceFitness = reference.fitness
-    _member_done(ctx)
 
     # 8.2  the other members
     for i in range(1, total):
         member = 1 + i
         ctx.monitor.status(f"Generation 1: building member {member} of {total}")
 
-        # 8.2.1  a random allowed section for every frame, 8.2.2 Save As,
+        # 8.2.1  a random allowed section for every unit, 8.2.2 Save As,
         # 8.2.3  fitness of the new model
-        genes = random_genes(options, ctx.rng)
+        genes = random_unit_genes(ctx.units, unit_choices, ctx.rng)
         ctx.population.append(_make_member(ctx, 1, member, total, genes))
 
     logger.info(
         "Step 8 - initial population: %d members in %s", len(ctx.population), generation_dir
     )
-    
+
     # best member of generation 1 by the GA ranking (same member the run page uses as its base)
     ctx.firstBestFitness = min(ctx.population, key=lambda m: ranking_key(m.fitness)).fitness
 
@@ -382,7 +429,9 @@ def step9_generations(ctx: GAContext) -> None:
     9.1  Pair m = 1 .. N/2 (N = even population size) gives two children.
          The children are built INSIDE Generation-g, next to their parents,
          as members N+1 .. 2N (Gen-g-(N+1) ... Gen-g-2N): Generation-g then
-         holds 2N members.
+         holds 2N members. The crossover works on the units of the DNA
+         (`ctx.units`): the number of genes is the number of units, and the
+         frames of a unit always come from the same parent.
     9.2  The N members with the highest fitness of those 2N are copied to
          Generation-(g+1) (renamed Gen-(g+1)-1 ... Gen-(g+1)-N, best first)
          and become the population of the next iteration.
@@ -392,17 +441,16 @@ def step9_generations(ctx: GAContext) -> None:
 
     total = ctx.params.popSize + ctx.params.popSize % 2  # N
     pairs = total // 2  # 0.5 * (popSize + mod(popSize, 2))
-    frames = list(ctx.frameSections)  # the DNA: genes in SAP table order
+    units = ctx.units  # the DNA: genes in SAP table order (linked frames = one gene)
 
-    if len(frames) < 3:
+    if len(units) < 3:
         raise ValueError(
-            f"Three-point crossover needs at least 3 frames, the model has {len(frames)}."
+            f"Three-point crossover needs at least 3 genes, the model has {len(units)} "
+            "(linked frames count as one gene)."
         )
 
     def rank(individual):
         return ranking_key(individual.fitness)
-    
-
 
     for g in range(1, ctx.params.genSize):
         ctx.generation = g
@@ -418,11 +466,11 @@ def step9_generations(ctx: GAContext) -> None:
                 ctx.population, ctx.params.tournamentSize, ctx.rng, rank
             )
 
-            # 9.1.3  three different random cut points (1 .. number of genes)
-            cuts = random_cut_points(len(frames), ctx.rng)
+            # 9.1.3  three different random cut points (1 .. number of genes = units)
+            cuts = random_cut_points(len(units), ctx.rng)
 
             # 9.1.4  three-point crossover
-            children = three_point_crossover(frames, parent_a.genes, parent_b.genes, cuts)
+            children = three_point_crossover(units, parent_a.genes, parent_b.genes, cuts)
 
             logger.info(
                 "Step 9.1 - g=%d m=%d: parents %s x %s, cuts %s",
@@ -442,8 +490,7 @@ def step9_generations(ctx: GAContext) -> None:
         )
 
         _step9_2_next_generation(ctx, g, total, rank)
-        _report_generation(ctx, g+1)
-
+        _report_generation(ctx, g + 1)
 
 
 def _step9_2_next_generation(ctx: GAContext, g: int, size: int, rank) -> None:
@@ -485,6 +532,7 @@ def _step9_2_next_generation(ctx: GAContext, g: int, size: int, rank) -> None:
         "Step 9.2 - g=%d: %d members copied to %s", g, len(next_population), generation_dir
     )
 
+
 def run_ga(ctx: GAContext) -> None:
     # Steps in order; the first one is step FIRST_RUN_STEP.
     steps = (
@@ -493,12 +541,11 @@ def run_ga(ctx: GAContext) -> None:
         step7_geometry,
         step8_initial_population,
         step9_generations,
-        # TODO: steps 10 ... 20
+        # TODO: the step after the typing page
     )
-    total = TOTAL_STEPS - FIRST_RUN_STEP + 1
 
     ctx.monitor.progress(0.0)
     prepare_database_folder(ctx)
 
-    for done, step in enumerate(steps, start=1):
+    for step in steps:
         step(ctx)
