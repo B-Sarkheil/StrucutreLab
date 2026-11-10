@@ -80,6 +80,7 @@ class GAContext:
     frameConnectivity: dict[str, tuple[str, str]] = field(default_factory=dict)  # (step 7)
     population: list[Individual] = field(default_factory=list)  # generation 1 (step 8)
     referenceFitness: object | None = None  # fitness of the reference file (step 8), for the % change
+        firstBestFitness: object | None = None  # fitness of the best member of generation 1 (end of step 8), for the % change of step 10
     deflection: DeflectionSettings | None = None  # beam deflection constraint (step 8), None = off
     dcrGoal: float = 1.0  # DCR Goal of step 4.1 (stress ratios are divided by it)
     cvWeights: CvWeights = field(default_factory=CvWeights)  # w_e, w_d of step 4.1
@@ -368,6 +369,10 @@ def step8_initial_population(ctx: GAContext) -> None:
     logger.info(
         "Step 8 - initial population: %d members in %s", len(ctx.population), generation_dir
     )
+    
+    # best member of generation 1 by the GA ranking (same member the run page uses as its base)
+    ctx.firstBestFitness = min(ctx.population, key=lambda m: ranking_key(m.fitness)).fitness
+
     _report_generation(ctx, 1)
 
 

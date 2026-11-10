@@ -2,17 +2,17 @@ cd "D:\Python Library\StructureLab"
 
 
 git add .
-git commit -m "New constraint page"
+git commit -m "Check chip weight of final selected member with best of generation 1"
 git push origin main
 
 
-
+### commit with tag ###################################
 git add .
 git commit -m "Sync sld_to_sap_algorithm.md with codes"
 git tag -a v1.1.5 -m "Release v1.1.5"
 git push origin main
 git push origin v1.1.5
-
+######################################################
 
 
 
@@ -21,8 +21,9 @@ git config --global http.proxy http://kerio:3128
 
 
 
-git reset --soft HEAD~1     ===> undo all commit changes
-git reset HEAD~1            ===> just delete the commit
+git reset --soft HEAD~1     ===> just delete the last commit
+git reset HEAD~1            ===> delete the last commit and unstage the changes
+git reset --hard HEAD~1     ===> undo and delete last commit
 
 
 
@@ -34,3 +35,5 @@ git rm -r --cached -- "tests/auto_design/SAP ref"
 git add .gitignore
 git commit -m "Remove SAP reference files from repository"
 git push origin main
+######################################################
+

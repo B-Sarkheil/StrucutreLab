@@ -1,9 +1,9 @@
 """Auto Design - step 10 (last page): typing of the final member.
 
 Top: four tiles about the best member (weight, mean DCR, max DCR, change
-of weight against the reference file; the tiles are the `StatTile` of the
-run page). Below: the table, drawn as one framed group per type, in the
-order Column, Beam, Vertical Brace, Horizontal Brace:
+of weight against the best member of generation 1; the tiles are the 
+`StatTile` of the run page). Below: the table, drawn as one framed group 
+per type, in the order Column, Beam, Vertical Brace, Horizontal Brace:
 
     Type | Section (one section per row) | No. (frames) | Number of types
 
@@ -595,7 +595,7 @@ class TypingPage(QWidget):
     def __init__(self, ctx: GAContext, best: Individual, parent: QWidget | None = None):
         super().__init__(parent)
 
-        reference = ctx.referenceFitness
+        reference = ctx.firstBestFitness
         frameRoles = ctx.frameRoles
 
         self.best = best
@@ -903,7 +903,7 @@ class TypingPage(QWidget):
         weight = StatTile("Weight")
         dcr = StatTile("Mean DCR")
         deflection = StatTile("Mean Deflection")
-        change = StatTile("Weight vs reference")
+        change = StatTile("Weight vs generation 1")
 
         fitness = best.fitness
 
@@ -932,11 +932,11 @@ class TypingPage(QWidget):
             )
 
             if percent is None:
-                change.set_value("–", "no reference weight")
+                change.set_value("–", "no generation 1 weight")
             else:
                 color = GREEN if percent < -1e-9 else (DANGER if percent > 1e-9 else None)
                 change.set_value(
-                    f"{percent:+.2f} %", f"reference {reference.weight:,.1f} kg", color
+                    f"{percent:+.2f} %", f"generation 1 best {reference.weight:,.1f} kg", color
                 )
         else:
             for tile in (weight, dcr, deflection, change):

@@ -27,7 +27,7 @@ desktop.ini
 Thumbs.db
 
 # SAP test files
-/tests/auto_design/SAP ref/
+/tests/auto_design/Sample Test/
 
 # VS Code
 # Project workspace settings are intentionally tracked.
