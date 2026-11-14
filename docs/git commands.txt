@@ -2,7 +2,7 @@ cd "D:\Python Library\StructureLab"
 
 
 git add .
-git commit -m "Check chip weight of final selected member with best of generation 1"
+git commit -m "Readme updated"
 git push origin main
 
 

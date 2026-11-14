@@ -1,10 +1,15 @@
 """Auto Design - step 4.3: genetic-algorithm settings and the Simulate Evolution button (it starts the run, steps 5 and on).
 
-Collects the GA parameters, the
-database folder where the models of every generation are saved. Values
-are validated when the user presses "Simulate Evolution"; on success the
-page emits `run_requested` with an `AutoDesignParams`. Back returns to
-the frame types page.
+Collects the GA parameters (population, tournament, generations, Directed
+and Random Mutation Percent) and the database folder where the models of
+every generation are saved. Values are validated when the user presses
+"Simulate Evolution"; on success the page emits `run_requested` with an
+`AutoDesignParams`. Back returns to the constraint settings page.
+
+Mutation percents: Directed Mutation Percent is 0 to 100; Random Mutation
+Percent is 0 to (100 - Directed Mutation Percent). The sum is checked live
+while typing (the Random field shows the error) and once more, as the last
+check, when Simulate Evolution is pressed.
 
 The database folder defaults to a folder named "SAP Models" next to the
 SAP2000 reference file chosen in step 1 (see `set_sap_path`). The folder
@@ -49,6 +54,9 @@ DEFAULT_FOLDER_NAME = "SAP Models"
 
 # src/ui/assets/icons/Run-Genetic.png (icon of the Simulate Evolution button)
 RUN_ICON_PNG = ICONS_DIR / "Run-Genetic.png"
+
+# Tolerance for the sum of the two mutation percents (float typing)
+_SUM_EPSILON = 1e-9
 
 RUN_STYLE = f"""
     QPushButton#runButton {{
@@ -151,21 +159,31 @@ class GASettingsPage(QWidget):
         self.popSize = Field("Population Size", "Positive integer")
         self.tournamentSize = Field("Tournament Size", "Integer, 2 or more")
         self.genSize = Field("Number of Generations", "Positive integer")
-        self.mutationPercent = Field("Mutation Percent (%)", "0 to 100")
+        self.directedMutationPercent = Field("Directed Mutation Percent (%)", "0 to 100")
+        self.randomMutationPercent = Field(
+            "Random Mutation Percent (%)", "0 to 100 minus Directed Mutation Percent"
+        )
         #self.penalizeLevel = Field("Penalize Level Coefficient", "Positive number")
 
         # Default values
         self.popSize.edit.setText("100")
         self.tournamentSize.edit.setText("4")
         self.genSize.edit.setText("10")
-        self.mutationPercent.edit.setText("0")
+        self.directedMutationPercent.edit.setText("0")
+        self.randomMutationPercent.edit.setText("0")
         #self.penalizeLevel.edit.setText("1")
 
         grid.addWidget(self.popSize, 0, 0)
         grid.addWidget(self.tournamentSize, 0, 1)
         grid.addWidget(self.genSize, 1, 0)
-        grid.addWidget(self.mutationPercent, 1, 1)
-        #grid.addWidget(self.penalizeLevel, 2, 0)
+        grid.addWidget(self.directedMutationPercent, 2, 0)
+        grid.addWidget(self.randomMutationPercent, 2, 1)
+        #grid.addWidget(self.penalizeLevel, 3, 0)
+
+        # Live check of "Directed + Random <= 100". Connected AFTER the
+        # Field's own textChanged -> clear_error, so this one runs last.
+        self.directedMutationPercent.edit.textChanged.connect(self._check_mutation_sum)
+        self.randomMutationPercent.edit.textChanged.connect(self._check_mutation_sum)
 
         card_layout.addLayout(grid)
 
@@ -243,11 +261,46 @@ class GASettingsPage(QWidget):
             self.popSize,
             self.tournamentSize,
             self.genSize,
-            self.mutationPercent,
+            self.directedMutationPercent,
+            self.randomMutationPercent,
             #self.penalizeLevel,
             self.modelsFolder,
         ):
             field.edit.returnPressed.connect(self._on_run)
+
+    # -----------------------------------------------------------------
+    # Mutation percents
+    # -----------------------------------------------------------------
+
+    def _mutation_values(self) -> tuple[float, float] | None:
+        """(directed, random) as numbers, or None while one of them is not a
+        number yet (nothing is reported then; Simulate Evolution does it)."""
+
+        try:
+            directed = float(self.directedMutationPercent.text().replace(",", "."))
+            random_ = float(self.randomMutationPercent.text().replace(",", "."))
+        except ValueError:
+            return None
+
+        return directed, random_
+
+    def _check_mutation_sum(self, *_args) -> None:
+        """Live check while typing: Random <= 100 - Directed. The error is
+        shown on the Random field."""
+
+        values = self._mutation_values()
+
+        if values is None:
+            return
+
+        directed, random_ = values
+
+        if 0.0 <= directed <= 100.0 and random_ > 100.0 - directed + _SUM_EPSILON:
+            self.randomMutationPercent.set_error(
+                f"At most 100 minus Directed = {100.0 - directed:g}."
+            )
+        else:
+            self.randomMutationPercent.clear_error()
 
     # -----------------------------------------------------------------
     # Database folder
@@ -324,7 +377,8 @@ class GASettingsPage(QWidget):
         pop_size = parse_int(self.popSize)
         tournament_size = parse_int(self.tournamentSize)
         gen_size = parse_int(self.genSize)
-        mutation_percent = parse_float(self.mutationPercent, maximum=100.0)
+        directed_percent = parse_float(self.directedMutationPercent, maximum=100.0)
+        random_percent = parse_float(self.randomMutationPercent, maximum=100.0)
         #penalize_level = parse_float(self.penalizeLevel)
         models_folder = self._check_folder()
 
@@ -332,7 +386,8 @@ class GASettingsPage(QWidget):
             pop_size,
             tournament_size,
             gen_size,
-            mutation_percent,
+            directed_percent,
+            random_percent,
             #penalize_level,
             models_folder,
         ):
@@ -346,12 +401,22 @@ class GASettingsPage(QWidget):
             self.tournamentSize.set_error("Must be at least 2 (two parents are needed).")
             return
 
+        # Last check: the two kinds of mutation together are at most 100 %.
+        total = directed_percent + random_percent
+
+        if total > 100.0 + _SUM_EPSILON:
+            message = f"Directed + Random must not exceed 100 (now {total:g})."
+            self.directedMutationPercent.set_error(message)
+            self.randomMutationPercent.set_error(message)
+            return
+
         self.run_requested.emit(
             AutoDesignParams(
                 popSize=pop_size,
                 tournamentSize=tournament_size,
                 genSize=gen_size,
-                mutationPercent=mutation_percent,
+                randomMutationPercent=random_percent,
+                directedMutationPercent=directed_percent,
                 #penalizeLevel=penalize_level,
                 modelsFolder=models_folder,
             )

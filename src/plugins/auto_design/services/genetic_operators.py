@@ -124,3 +124,7 @@ def three_point_crossover(
             child2[frame] = genesA[frame] if swap else genesB[frame]
 
     return child1, child2
+
+def crossover_swaps(unitCount: int, cuts: tuple[int, int, int]) -> list[bool]:
+    """For every unit: True when child 1 got it from parent B (child 2 from A)."""
+    return [sum(i + 1 > cut for cut in cuts) % 2 == 1 for i in range(unitCount)]

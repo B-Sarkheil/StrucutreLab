@@ -31,13 +31,13 @@ class ConstraintParams:
 
 @dataclass(frozen=True)
 class AutoDesignParams:
-    """Validated values of the GA settings form (step 4.2)."""
+    """Validated values of the GA settings form (step 4.3)."""
 
     popSize: int  # population size, > 0
     tournamentSize: int  # tournament selection size, 2..popSize
     genSize: int  # number of generations, > 0
-    mutationPercent: float  # mutation percent, 0..100
-    #penalizeLevel: float  # penalty coefficient k, > 0
+    randomMutationPercent: float  # random mutation percent, 0..(100 - directed)
+    directedMutationPercent: float  # directed mutation percent, 0..100
     modelsFolder: str = ""  # database folder where the models of every generation are saved
 
 

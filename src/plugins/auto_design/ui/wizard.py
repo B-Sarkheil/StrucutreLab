@@ -346,11 +346,12 @@ class AutoDesignWizard(QStackedWidget):
 
         logger.info(
             "GA settings accepted: pop=%d, tournament=%d, generations=%d, "
-            "mutation=%.2f%%, models folder=%s",
+            "random mutation=%.2f%%, directed mutation=%.2f%%, models folder=%s",
             params.popSize,
             params.tournamentSize,
             params.genSize,
-            params.mutationPercent,
+            params.randomMutationPercent,
+            params.directedMutationPercent,
             params.modelsFolder,
         )
 

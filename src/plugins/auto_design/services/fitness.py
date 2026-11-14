@@ -81,6 +81,8 @@ class Fitness:
     meanDeflection: float = 0.0  # mean deflection ratio of the beams (0 = not used)
     maxDeflection: float = 0.0  # largest deflection ratio of the beams
     deflectionCount: int = 0  # number of beams with a deflection ratio
+    stressRatios: dict[str, float] = field(default_factory=dict)      # frame -> stress ratio (not divided by the goal)
+    deflectionRatios: dict[str, float] = field(default_factory=dict)  # frame -> deflection ratio
 
 
 # ---------------------------------------------------------------------
@@ -174,6 +176,7 @@ def fitness_calculator(
     stress_ratios = read_stress_ratios(sap)
     deflection_ratios = read_deflection_ratios(sap, deflection) if use_deflection else {}
 
+
     # The stress ratio is divided by the DCR goal BEFORE it is compared with the
     # deflection ratio (whose goal is already L / n, so its limit is 1.0).
     scaled_stress = {frame: ratio / dcr_goal for frame, ratio in stress_ratios.items()}
@@ -200,6 +203,8 @@ def fitness_calculator(
         meanDeflection=sum(bending) / len(bending) if bending else 0.0,
         maxDeflection=max(bending, default=0.0),
         deflectionCount=len(bending),
+        stressRatios=dict(stress_ratios),
+        deflectionRatios=dict(deflection_ratios),
     )
 
     sap.save_model_as(sap_path)  # keep the analysis and design results in the file
