@@ -62,6 +62,11 @@ from src.plugins.auto_design.services.population import (
     build_gene_options,
     member_name,
 )
+from src.plugins.auto_design.services.genetic_operators import crossover_swaps  # کنار بقیه
+from src.plugins.auto_design.services.mutation import mutate_child
+from src.plugins.auto_design.services.section_ordering import (
+    DEFLECTION, STRESS, read_section_properties, sort_strong_to_weak,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -96,6 +101,8 @@ class GAContext:
     monitor: RunMonitor = field(default_factory=RunMonitor)
     totalMembers: int = 0  # members to evaluate in the whole run (step 8 + step 9)
     doneMembers: int = 0  # members evaluated so far (progress)
+    unitChoices: list[list[str]] = field(default_factory=list)  # allowed sections of every unit (step 8)
+    unitOrders: dict[str, list[list[str]]] = field(default_factory=dict)  # kind -> strong->weak list per unit (step 8)
 
 
 def prepare_database_folder(ctx: GAContext) -> None:
@@ -307,6 +314,7 @@ def _report_generation(ctx: GAContext, generation: int) -> None:
             maxRatio=best.fitness.maxRatio,
             meanDeflection=best.fitness.meanDeflection,
             maxDeflection=best.fitness.maxDeflection,
+            bestName=best.name,
         )
     )
 
@@ -353,6 +361,15 @@ def step8_initial_population(ctx: GAContext) -> None:
     # The DNA: one unit per group of linked frames, one per other frame.
     ctx.units = build_units(ctx.frameSections, ctx.frameLinks)
     unit_choices = unit_options(ctx.units, options)
+    ctx.unitChoices = unit_choices
+
+    if ctx.params.directedMutationPercent > 0:
+        ctx.monitor.status("Reading I33 and Z33 of the sections for the directed mutation")
+        properties = read_section_properties(ctx.sap)
+        ctx.unitOrders = {
+            kind: [sort_strong_to_weak(c, properties, kind) for c in unit_choices]
+            for kind in (STRESS, DEFLECTION)
+        }
     linked_frames = sum(len(unit) for unit in ctx.units if len(unit) > 1)
 
     logger.info(
@@ -471,6 +488,20 @@ def step9_generations(ctx: GAContext) -> None:
 
             # 9.1.4  three-point crossover
             children = three_point_crossover(units, parent_a.genes, parent_b.genes, cuts)
+            directed = ctx.params.directedMutationPercent
+            randomly = ctx.params.randomMutationPercent
+
+            if directed > 0 or randomly > 0:
+                swaps = crossover_swaps(len(units), cuts)
+                sources = (
+                    [(parent_b if s else parent_a).fitness for s in swaps],
+                    [(parent_a if s else parent_b).fitness for s in swaps],
+                )
+                children = tuple(
+                    mutate_child(child, units, ctx.unitChoices, ctx.unitOrders, src,
+                                 ctx.dcrGoal, directed, randomly, ctx.rng)
+                    for child, src in zip(children, sources)
+                )
 
             logger.info(
                 "Step 9.1 - g=%d m=%d: parents %s x %s, cuts %s",

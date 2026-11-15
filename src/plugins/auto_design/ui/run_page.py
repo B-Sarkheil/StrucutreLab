@@ -518,6 +518,7 @@ METRICS = (
         ),
         limit=1.0,
         limit_label="Limit 1.0",
+        hover_name=True,
     ),
     MetricSpec(
         key="deflection",
@@ -531,6 +532,7 @@ METRICS = (
         ),
         limit=1.0,
         limit_label="Limit 1.0",
+        hover_name=True,
     ),
 )
 
@@ -926,7 +928,12 @@ class EvolutionChart(QWidget):
         painter.setPen(pen)
         painter.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()))
 
-        rows: list[tuple[str, str]] = [(f"Generation {stats.generation}", PAPER)]
+        title = (
+            stats.bestName
+            if self._metric.hover_name and stats.bestName
+            else f"Generation {stats.generation}"
+        )
+        rows: list[tuple[str, str]] = [(title, PAPER)]
 
         for series in self._metric.series:
             value = getattr(stats, series.attr)
