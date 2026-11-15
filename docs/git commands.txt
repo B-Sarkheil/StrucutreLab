@@ -8,7 +8,7 @@ git push origin main
 
 ### commit with tag ###################################
 git add .
-git commit -m "Sync sld_to_sap_algorithm.md with codes"
+git commit -m "Import/Export in linke page of auto-design"
 git tag -a v1.1.5 -m "Release v1.1.5"
 git push origin main
 git push origin v1.1.5
@@ -35,5 +35,11 @@ git rm -r --cached -- "tests/auto_design/SAP ref"
 git add .gitignore
 git commit -m "Remove SAP reference files from repository"
 git push origin main
+######################################################
+
+
+### edit wrnog dexcription for a pushed commit #######
+git commit --amend -m "Correct commit message"
+git push --force-with-lease
 ######################################################
 

@@ -930,7 +930,7 @@ class EvolutionChart(QWidget):
         painter.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()))
 
         title = (
-            stats.bestName
+            f"Best: {stats.bestName}"
             if self._metric.hover_name and stats.bestName
             else f"Generation {stats.generation}"
         )

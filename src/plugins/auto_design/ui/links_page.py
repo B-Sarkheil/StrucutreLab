@@ -62,6 +62,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QComboBox,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -775,13 +776,13 @@ class FrameLinksPage(QWidget):
         self.import_button = QPushButton("Import…")
         self.import_button.setToolTip("Read the link groups from an Excel file (matched by frame name)")
         self.import_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.import_button.setMinimumHeight(36)
+        self.import_button.setMinimumSize(110, 42)
         self.import_button.clicked.connect(self._import_excel)
 
         self.export_button = QPushButton("Export…")
         self.export_button.setToolTip("Save all frames and their link groups to Excel")
         self.export_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.export_button.setMinimumHeight(36)
+        self.export_button.setMinimumSize(110, 42)
         self.export_button.clicked.connect(self._export_excel)
 
         tools = QHBoxLayout()
@@ -792,11 +793,7 @@ class FrameLinksPage(QWidget):
         tools.addSpacing(8)
         tools.addWidget(self.link_button)
         tools.addWidget(self.unlink_button)
-        tools.addSpacing(8)
-        tools.addWidget(self.import_button)
-        tools.addWidget(self.export_button)
         layout.addLayout(tools)
-        layout.addSpacing(10)
 
         # Table (left) and panel (right)
         body = QHBoxLayout()
@@ -889,6 +886,8 @@ class FrameLinksPage(QWidget):
         footer = QHBoxLayout()
         footer.setSpacing(10)
         footer.addWidget(self.back_button)
+        footer.addWidget(self.import_button)
+        footer.addWidget(self.export_button)
         footer.addWidget(self.retry_button)
         footer.addStretch()
         footer.addWidget(self.next_button)

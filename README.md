@@ -326,10 +326,8 @@ Applied to **each child** right after the crossover, on UNITS (a unit gets one n
 
   | r_gov | change of the section of the whole unit |
   |---|---|
-  | below 0.4 | 3 steps weaker |
-  | 0.4 to 0.7 | 2 steps weaker |
-  | 0.7 to 0.9 | 1 step weaker |
-  | 0.9 to 1.0 | no change |
+  | below 0.5 | 1 steps weaker |
+  | 0.5 to 1.0 | no change |
   | 1.0 to 1.2 | 1 step stronger |
   | 1.2 to 2.0 | 2 steps stronger |
   | above 2.0 | 3 steps stronger |

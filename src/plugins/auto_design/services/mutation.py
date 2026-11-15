@@ -7,9 +7,9 @@ is one frame or a group of linked frames, see `gene_groups.py`):
    The largest governing ratio r_gov of the unit decides how many steps the
    section moves in the strong -> weak order of the unit's allowed sections:
 
-       r_gov <  0.4        2 steps weaker      1.0 < r_gov <= 1.2   1 step stronger
-       0.4 <= r_gov < 0.7  1 step weaker       1.2 < r_gov <= 2.0   2 steps stronger
-       0.7 <= r_gov <= 1.0 no change           r_gov > 2.0          3 steps stronger
+       r_gov <  0.5         1 step weaker       1.0 < r_gov <= 1.2   1 step stronger
+       0.5 <= r_gov <= 1.0  no change           1.2 < r_gov <= 2.0   2 steps stronger
+                                                r_gov > 2.0          3 steps stronger
 
    r_gov = max(stress ratio / DCR goal, deflection ratio) of the frame. The
    KIND of the larger one decides the order: deflection -> I33, stress -> Z33.
@@ -38,11 +38,9 @@ logger = logging.getLogger(__name__)
 def weaker_steps(r_gov: float) -> int:
     """Steps toward weaker sections (negative = stronger) for a ratio."""
 
-    if r_gov < 0.4:
-        return 2
-    if r_gov < 0.7:
-        return 1
-    if r_gov <= 1.0:  # 0.7 .. 1.0: no change (cautious; see the user's decision 2026-11-14)
+    if r_gov < 0.5:
+        return 1  # cautious: only one step weaker
+    if r_gov <= 1.0:  # 0.5 .. 1.0: no change
         return 0
     if r_gov <= 1.2:
         return -1
