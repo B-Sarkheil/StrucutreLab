@@ -108,6 +108,13 @@ from src.ui.theme import (
     STEEL_DIM,
 )
 from src.ui.widgets import arrow_icon, with_alpha
+from pathlib import Path
+from src.plugins.auto_design.services.links_excel import (
+    LinkRow,
+    LinksExcelError,
+    export_links,
+    import_links,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -765,6 +772,18 @@ class FrameLinksPage(QWidget):
         self.unlink_button.setToolTip("Take the selected frames out of their groups (Ctrl+U)")
         self.unlink_button.clicked.connect(self._unlink_selected)
 
+        self.import_button = QPushButton("Import…")
+        self.import_button.setToolTip("Read the link groups from an Excel file (matched by frame name)")
+        self.import_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.import_button.setMinimumHeight(36)
+        self.import_button.clicked.connect(self._import_excel)
+
+        self.export_button = QPushButton("Export…")
+        self.export_button.setToolTip("Save all frames and their link groups to Excel")
+        self.export_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.export_button.setMinimumHeight(36)
+        self.export_button.clicked.connect(self._export_excel)
+
         tools = QHBoxLayout()
         tools.setSpacing(8)
         tools.addWidget(self.filter_edit, 1)
@@ -773,6 +792,9 @@ class FrameLinksPage(QWidget):
         tools.addSpacing(8)
         tools.addWidget(self.link_button)
         tools.addWidget(self.unlink_button)
+        tools.addSpacing(8)
+        tools.addWidget(self.import_button)
+        tools.addWidget(self.export_button)
         layout.addLayout(tools)
         layout.addSpacing(10)
 
@@ -1246,6 +1268,139 @@ class FrameLinksPage(QWidget):
         self._remove_from_groups(linked)
         self._after_change(f"{len(linked)} frame(s) are free again.")
 
+
+    # -- Excel -----------------------------------------------------------
+
+    def _show_error(self, text: str) -> None:
+        self.message.setText(text)
+        self.message.setVisible(True)
+
+    def _export_excel(self) -> None:
+        if self._loading or not self._loaded:
+            return
+
+        sdb = Path(self.sap_path)
+        default = sdb.with_name(f"{sdb.stem}_links.xlsx")
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export linked frames to Excel", str(default), "Excel files (*.xlsx)"
+        )
+
+        if not path:
+            return
+
+        if not path.lower().endswith(".xlsx"):
+            path += ".xlsx"
+
+        rows = []
+
+        for frame in sorted(self._order, key=self._order.get):
+            middle = self._middle(frame)
+            group_id = self._group_of.get(frame, 0)
+            rows.append(
+                LinkRow(
+                    frame=frame,
+                    type=ROLE_LABELS[self._roles[frame]],
+                    section=self._frame_sections.get(frame, ""),
+                    x=middle[0] if middle else None,
+                    y=middle[1] if middle else None,
+                    z=middle[2] if middle else None,
+                    group=self._groups[group_id].name if group_id else "",
+                )
+            )
+
+        try:
+            export_links(path, rows)
+        except LinksExcelError as exc:
+            self._show_error(str(exc))
+            return
+
+        self.message.setVisible(False)
+        self._set_status(
+            f"Exported {len(rows)} frames ({len(self._groups)} groups) to {Path(path).name}.",
+            result=True,
+        )
+
+    def _import_excel(self) -> None:
+        if self._loading or not self._loaded:
+            return
+
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import linked frames from Excel",
+            str(Path(self.sap_path).parent),
+            "Excel files (*.xlsx)",
+        )
+
+        if not path:
+            return
+
+        try:
+            data = import_links(path)
+        except LinksExcelError as exc:
+            self._show_error(str(exc))
+            return
+
+        known = [frame for frame in self._order if frame in data]  # SAP order
+
+        if not known:
+            self._show_error("None of the frame names in the file exist in this model.")
+            return
+
+        # Same text (case ignored) = same group.
+        buckets: dict[str, list[str]] = {}
+        names: dict[str, str] = {}
+
+        for frame in known:
+            label = data[frame]
+
+            if label:
+                key = label.casefold()
+                buckets.setdefault(key, []).append(frame)
+                names.setdefault(key, label[:24])
+
+        groups = {key: frames for key, frames in buckets.items() if len(frames) >= 2}
+        single = len(buckets) - len(groups)
+
+        if self._groups:
+            answer = QMessageBox.question(
+                self,
+                "Import linked frames",
+                f"The {len(self._groups)} group(s) you made now will be replaced by the "
+                "groups of the file (frames not linked in the file become free). Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+
+        self._groups.clear()
+        self._group_of.clear()
+        self._next_id = 1
+
+        for key, frames in groups.items():
+            group_id = self._create_group(frames)
+            self._groups[group_id].name = names[key]
+
+        self.message.setVisible(False)
+
+        text = (
+            f"Imported {Path(path).name}: {len(groups)} groups, "
+            f"{sum(len(f) for f in groups.values())} linked frames."
+        )
+        not_in_model = len(data) - len(known)
+        not_in_file = len(self._order) - len(known)
+
+        if single:
+            text += f" {single} group(s) with a single frame were ignored."
+        if not_in_model:
+            text += f" {not_in_model} frame(s) of the file are not in the model."
+        if not_in_file:
+            text += f" {not_in_file} frame(s) of the model are not in the file (free)."
+
+        self._after_change(text)
+
     # -- groups -----------------------------------------------------------
 
     def _create_group(self, frames: list[str]) -> int:
@@ -1424,6 +1579,7 @@ class FrameLinksPage(QWidget):
             self.table.setRowHidden(row, hidden)
 
         self._update_summary()
+        self._sync_controls()
 
     def _update_summary(self) -> None:
         total = self.table.rowCount()
@@ -1455,6 +1611,8 @@ class FrameLinksPage(QWidget):
         self.link_button.setEnabled(ready and len(selected) >= 2)
         self.unlink_button.setEnabled(ready and in_group > 0)
         self.next_button.setEnabled(ready)
+        self.import_button.setEnabled(ready)
+        self.export_button.setEnabled(ready)
 
     def _set_status(self, html: str, result: bool = False, warn: bool = False) -> None:
         self.status.setProperty("result", result)

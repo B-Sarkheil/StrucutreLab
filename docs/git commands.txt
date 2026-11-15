@@ -2,7 +2,7 @@ cd "D:\Python Library\StructureLab"
 
 
 git add .
-git commit -m "Readme updated"
+git commit -m "Change the title of chart hover"
 git push origin main
 
 

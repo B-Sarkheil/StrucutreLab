@@ -492,6 +492,7 @@ class MetricSpec:
     series: tuple[SeriesSpec, ...]  # the first one is the main line
     limit: float | None = None  # horizontal limit line (for example DCR = 1)
     limit_label: str = ""
+    hover_name: bool = False  # hover box title = name of the best member instead of "Generation k"
 
 
 METRICS = (
