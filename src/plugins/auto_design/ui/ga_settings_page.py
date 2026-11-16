@@ -46,11 +46,12 @@ from src.plugins.auto_design.ui.fields import (
 )
 from src.plugins.auto_design.ui.icons import evolution_run_icon
 from src.plugins.sld_to_sap.ui.icons import folder_icon
-from src.ui.theme import AMBER, BLUE, CYAN, FONT_TITLE, ICONS_DIR, PAPER
+from src.ui.theme import AMBER, BLUE, CYAN, FONT_TITLE, ICONS_DIR, PAPER, STEEL_DIM
 from src.ui.widgets import arrow_icon
 from PySide6.QtGui import QColor, QIcon, QPixmap, QRegion
 
 DEFAULT_FOLDER_NAME = "SAP Models"
+RESUME_FOLDER_NAME = "SAP Models (Resumed)"  # default database folder of a resume
 
 # src/ui/assets/icons/Run-Genetic.png (icon of the Simulate Evolution button)
 RUN_ICON_PNG = ICONS_DIR / "Run-Genetic.png"
@@ -211,6 +212,8 @@ class GASettingsPage(QWidget):
         layout.addWidget(card)
         layout.addSpacing(28)
 
+        self._first_generation_folder = ""  # resume: folder of the first generation ("" = none)
+        self._saved_pop_text: str | None = None  # Population Size typed before it was locked
         self.set_sap_path(sap_path)
 
         # -------------------------------------------------------------
@@ -316,8 +319,47 @@ class GASettingsPage(QWidget):
             self.modelsFolder.edit.setText(self._default_folder())
 
     def _default_folder(self) -> str:
+        if self._first_generation_folder:
+            # Next to the first generation folder, never inside it (see check_folder_usable).
+            return str(Path(self._first_generation_folder).parent / RESUME_FOLDER_NAME)
+
         if not self._sap_path:
             return ""
+
+        return str(Path(self._sap_path).parent / DEFAULT_FOLDER_NAME)
+
+    def set_first_generation(self, folder: str, count: int | None) -> None:
+        """Resume mode: `folder` is the first generation folder and `count` the
+        number of its models (None = normal run). In resume mode the Population
+        Size is the number of models and cannot be edited."""
+
+        self._first_generation_folder = folder if count else ""
+        self.set_fixed_population(count)
+
+        if not self._folder_edited:
+            self.modelsFolder.edit.setText(self._default_folder())
+
+    def set_fixed_population(self, count: int | None) -> None:
+        edit = self.popSize.edit
+
+        if count:
+            if self._saved_pop_text is None:
+                self._saved_pop_text = edit.text()
+
+            edit.setText(str(count))
+            edit.setReadOnly(True)
+            edit.setStyleSheet(f"color: {STEEL_DIM};")
+            edit.setToolTip(
+                "Fixed: the number of SAP2000 models in the first generation folder."
+            )
+        else:
+            if self._saved_pop_text is not None:
+                edit.setText(self._saved_pop_text)
+                self._saved_pop_text = None
+
+            edit.setReadOnly(False)
+            edit.setStyleSheet("")
+            edit.setToolTip("")
 
         return str(Path(self._sap_path).parent / DEFAULT_FOLDER_NAME)
 

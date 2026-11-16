@@ -30,6 +30,7 @@ from src.plugins.auto_design.ui.typing_page import TypingPage
 from src.plugins.auto_design.services.ga_run import GAContext, run_ga
 from src.plugins.auto_design.services.population import ROLE_LABELS, ROLES
 from src.plugins.auto_design.services.run_monitor import RunCancelled
+from src.plugins.auto_design.services.first_generation import list_member_models
 from src.plugins.auto_design.services.database_folder import (
     check_folder_usable,
     describe_folder,
@@ -83,6 +84,7 @@ class AutoDesignWizard(QStackedWidget):
 
         # Collected data
         self.sap_path: str | None = None
+        self.first_generation_folder: str = ""  # resume: folder of an existing first generation ("" = none)
         self.sections: list[SectionPermission] | None = None
         self.frame_roles: dict[str, str] | None = None  # frame -> role, from the Frame types page
         self.frame_links: list[tuple[str, ...]] | None = None  # groups of linked frames (step 4.1), [] = none
@@ -110,9 +112,9 @@ class AutoDesignWizard(QStackedWidget):
     # Step 1 -> 2
     # -----------------------------------------------------------------
 
-    def _show_sections(self, sap_path: str) -> None:
+    def _show_sections(self, sap_path: str, first_generation_folder: str = "") -> None:
         self.sap_path = sap_path
-
+        self.first_generation_folder = first_generation_folder
         page = self._sections_page
 
         # Going back and forth with the same file keeps the loaded model
@@ -317,6 +319,18 @@ class AutoDesignWizard(QStackedWidget):
 
         self._show_ga_settings()
 
+    def _first_generation_count(self) -> int | None:
+        """Number of models of the first generation folder (None = no resume)."""
+
+        if not self.first_generation_folder:
+            return None
+
+        try:
+            return len(list_member_models(self.first_generation_folder))
+        except ValueError as exc:
+            QMessageBox.warning(self, "First generation folder", str(exc))
+            return None
+
     def _show_ga_settings(self) -> None:
         # Created once, so the values typed by the user survive Back / Next.
         if self._ga_page is None:
@@ -331,7 +345,13 @@ class AutoDesignWizard(QStackedWidget):
         # (unless the user has already chosen one).
         self._ga_page.set_sap_path(self.sap_path or "")
 
+        # Resume: the population size is the number of models and cannot be edited.
+        self._ga_page.set_first_generation(
+            self.first_generation_folder, self._first_generation_count()
+        )
+
         self.setCurrentWidget(self._ga_page)
+    
 
     def _back_to_constraints(self) -> None:
         if self._constraints_page is not None:
@@ -363,7 +383,9 @@ class AutoDesignWizard(QStackedWidget):
     def _confirm_database_folder(self, params: AutoDesignParams) -> bool:
         """Warn that the database folder is cleared at the start of the run."""
 
-        problem = check_folder_usable(params.modelsFolder, self.sap_path or "")
+        problem = check_folder_usable(
+            params.modelsFolder, self.sap_path or "", self.first_generation_folder
+        )
 
         if problem:
             QMessageBox.warning(self, "Database folder", problem)
@@ -439,6 +461,7 @@ class AutoDesignWizard(QStackedWidget):
             frameRoles=dict(self.frame_roles),
             frameLinks=[tuple(group) for group in self.frame_links],
             constraints=self.constraints,
+            firstGenerationFolder=self.first_generation_folder,
         )
         worker = _RunWorker(context, self)
 

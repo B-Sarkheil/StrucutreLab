@@ -218,3 +218,104 @@ def read_stress_ratios(client: SapClient) -> dict[str, float]:
         )
 
     return result
+
+# ---------------------------------------------------------------------
+# Major / minor axis flexure ratios at the governing point (directed mutation)
+# ---------------------------------------------------------------------
+
+# Prefix of the steel design table that holds MMajRatio and MMinRatio. The
+# rest of the key is the design code name, so the table is found by prefix.
+FLEXURE_TABLE_PREFIX = "Steel Design 2 - PMM Details"
+
+_FLEXURE_WARNED: set[str] = set()
+
+
+def _read_steel_governing_points(client: SapClient) -> dict[str, tuple[str, float]]:
+    """Frame -> (load combination, location) of the row with the governing
+    (largest) ratio, from the same summary call that gives the DCR."""
+
+    group = client.api.eItemType.Group
+    raw = client.model.DesignSteel.GetSummaryResults(
+        ALL_GROUP, 0, None, None, None, None, None, None, None, group
+    )
+    data = _unpack(raw, 7, "DesignSteel.GetSummaryResults")
+
+    if data is None or data[0] == 0:
+        return {}
+
+    _count, (frames, ratios, _types, locations, combos, _errors, _warnings) = data
+
+    best: dict[str, float] = {}
+    result: dict[str, tuple[str, float]] = {}
+
+    for frame, ratio, location, combo in zip(frames, ratios, locations, combos):
+        frame, ratio = str(frame), float(ratio)
+
+        if ratio > best.get(frame, float("-inf")):
+            best[frame] = ratio
+            result[frame] = (str(combo).strip(), float(location))
+
+    return result
+
+
+def read_steel_flexure_ratios(client: SapClient) -> tuple[dict[str, float], dict[str, float]]:
+    """(frame -> MMajRatio, frame -> MMinRatio) of the steel frames, both taken
+    from ONE row of the PMM table: the row of the governing load combination
+    (the one that gives the DCR) whose location is closest to the governing
+    location. The two ratios are never mixed between different combinations.
+    When the table, a field or the governing point is not found, the frame is
+    left out (the directed mutation then falls back to Z33); a problem with
+    the whole table gives two empty dicts and one warning in the log."""
+
+    try:
+        table = next(
+            (k for k in client.table_keys() if k.lower().startswith(FLEXURE_TABLE_PREFIX.lower())),
+            None,
+        )
+
+        if table is None:
+            raise SapError(f"No table starting with '{FLEXURE_TABLE_PREFIX}' was found.")
+
+        governing = _read_steel_governing_points(client)
+
+        # frame -> (distance to the governing location, -largest flexure ratio, major, minor)
+        chosen: dict[str, tuple[float, float, float, float]] = {}
+
+        for row in client.read_table(table):
+            frame = pick_field(row, "Frame", table)
+            point = governing.get(frame)
+
+            if point is None:
+                continue
+
+            combo, location = point
+
+            if pick_field(row, "Combo", table).lower() != combo.lower():
+                continue
+
+            try:
+                major = float(pick_field(row, "MMajRatio", table).replace(",", "."))
+                minor = float(pick_field(row, "MMinRatio", table).replace(",", "."))
+            except ValueError:
+                continue
+
+            try:
+                distance = abs(float(pick_field(row, "Location", table).replace(",", ".")) - location)
+            except ValueError:
+                distance = 0.0
+
+            key = (distance, -max(major, minor), major, minor)
+
+            if frame not in chosen or key[:2] < chosen[frame][:2]:
+                chosen[frame] = key
+    except SapError as exc:
+        if str(exc) not in _FLEXURE_WARNED:
+            _FLEXURE_WARNED.add(str(exc))
+            logger.warning("Major/minor flexure ratios not available (Z33 is used): %s", exc)
+
+        return {}, {}
+
+    return (
+        {frame: values[2] for frame, values in chosen.items()},
+        {frame: values[3] for frame, values in chosen.items()},
+    )

@@ -7,6 +7,10 @@ validated and the page emits `next_requested` with the path (str).
 The SAP2000 logo is read from `src/ui/assets/icons/sap.png` (`sap.ico`
 and `sao.ico` are accepted too, in that order). If none of them exists,
 a plain "SAP" lettering is drawn instead, so the page never breaks.
+
+Long file names and folder paths never widen the page: they are shown
+in `ElidedLabel`, which has no minimum width and shortens its text (in
+the middle) to the width it really has.
 """
 from __future__ import annotations
 
@@ -52,6 +56,9 @@ from src.ui.theme import (
     STEEL,
     STEEL_DIM,
 )
+from src.plugins.auto_design.services.first_generation import list_member_models
+from src.plugins.auto_design.ui.fields import FORM_STYLE, Field
+from src.plugins.sld_to_sap.ui.icons import folder_icon
 from src.ui.widgets import ClickableFrame, arrow_icon, draw_corner_ticks, mix, with_alpha
 
 SAP_ICON_NAMES = ("sap.png", "sap.ico", "sao.ico")
@@ -88,7 +95,7 @@ PAGE_STYLE = f"""
         color: {DANGER};
         font-size: 9.5pt;
     }}
-        QLabel#dropChip[selected="true"] {{
+    QLabel#dropChip[selected="true"] {{
         color: {GREEN};
         border: 1px solid {GREEN};
         font-weight: 600;
@@ -128,6 +135,73 @@ def _format_size(size: int) -> str:
         value /= 1024
 
     return f"{value:.1f} GB"
+
+
+class ElidedLabel(QLabel):
+    """Label that never forces a minimum width on its parent.
+
+    In the elided mode the text is shortened (in the middle by default)
+    to the width the label really has, and it is shortened again every
+    time the label is resized. The full text stays available through
+    `full_text()`. With `elide=False` it behaves like a normal label
+    (used for the word-wrapped hint of the empty state).
+    """
+
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        mode: Qt.TextElideMode = Qt.TextElideMode.ElideMiddle,
+    ):
+        super().__init__(parent)
+
+        self._full = ""
+        self._mode = mode
+        self._elide = True
+
+    def full_text(self) -> str:
+        return self._full
+
+    def set_full_text(self, text: str, elide: bool = True) -> None:
+        self._full = text
+        self._elide = elide
+        self.setWordWrap(not elide)
+        self._apply_elide()
+        self.updateGeometry()
+
+    def minimumSizeHint(self) -> QSize:
+        if not self._elide:
+            return super().minimumSizeHint()
+
+        return QSize(0, super().minimumSizeHint().height())
+
+    def sizeHint(self) -> QSize:
+        if not self._elide:
+            return super().sizeHint()
+
+        # Do not ask for the width of the whole text.
+        return QSize(200, super().sizeHint().height())
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_elide()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._apply_elide()
+
+    def _apply_elide(self) -> None:
+        if not self._elide:
+            QLabel.setText(self, self._full)
+            return
+
+        width = self.contentsRect().width()
+
+        if width <= 0:
+            QLabel.setText(self, self._full)
+            return
+
+        text = QFontMetrics(self.font()).elidedText(self._full, self._mode, width)
+        QLabel.setText(self, text)
 
 
 class IconBadge(QWidget):
@@ -258,16 +332,18 @@ class IconBadge(QWidget):
             ]
         )
 
+
 class DropZone(ClickableFrame):
     """Big area: drop a .sdb file here or click to browse.
 
     Emits `clicked` (open the file dialog) and `file_dropped(path)`.
+    The file name and the folder are elided to the real width of the
+    area, so a long path never makes the page wider than the window.
     """
 
     file_dropped = Signal(str)
 
     RADIUS = 16
-    PATH_WIDTH = 780
     GRID_STEP = 24
     GRID_MAJOR = 4
 
@@ -284,18 +360,16 @@ class DropZone(ClickableFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 22, 28, 22)
         layout.setSpacing(0)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.badge = IconBadge()
 
-        self.title = QLabel()
+        self.title = ElidedLabel()
         self.title.setObjectName("dropTitle")
         self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.hint = QLabel()
+        self.hint = ElidedLabel()
         self.hint.setObjectName("dropHint")
         self.hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.hint.setMaximumWidth(self.PATH_WIDTH + 40)
 
         self.detail = QLabel()
         self.detail.setObjectName("dropDetail")
@@ -314,17 +388,23 @@ class DropZone(ClickableFrame):
 
         self.chip.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
+        # The three text labels fill the width of the area (no alignment
+        # argument) and center their own text; this is what lets them be
+        # shortened to the width that is really available. The block is
+        # centered vertically with the two stretches.
+        layout.addStretch(1)
         layout.addWidget(self.badge, 0, Qt.AlignmentFlag.AlignHCenter)
         layout.addSpacing(12)
-        layout.addWidget(self.title, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self.title)
         layout.addSpacing(6)
-        layout.addWidget(self.hint, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self.hint)
         layout.addSpacing(4)
-        layout.addWidget(self.detail, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self.detail)
         layout.addSpacing(14)
         layout.addWidget(self.browse_button, 0, Qt.AlignmentFlag.AlignHCenter)
         layout.addSpacing(12)
         layout.addWidget(self.chip, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addStretch(1)
 
         self.set_file(None)
 
@@ -338,10 +418,11 @@ class DropZone(ClickableFrame):
         self._has_file = path is not None
 
         if path is None:
-            self.title.setText("Select your SAP2000 model")
-            self.hint.setWordWrap(True)
-            self.hint.setText(
-                "Drag and drop a .sdb file here, or click anywhere in this area to browse."
+            self.title.set_full_text("Select your SAP2000 model")
+            self.title.setToolTip("")
+            self.hint.set_full_text(
+                "Drag and drop a .sdb file here, or click anywhere in this area to browse.",
+                elide=False,
             )
             self.hint.setToolTip("")
             self.detail.setText("")
@@ -352,22 +433,14 @@ class DropZone(ClickableFrame):
         else:
             file = Path(path)
 
-            # Measure with the real font of the label (10 pt from the style
-            # sheet); the default font is narrower and let the path wrap.
-            font = QFont(self.hint.font())
-            font.setPointSizeF(10.0)
-            folder = QFontMetrics(font).elidedText(
-                str(file.parent), Qt.TextElideMode.ElideMiddle, self.PATH_WIDTH
-            )
-
             try:
                 size = _format_size(file.stat().st_size)
             except OSError:
                 size = "unknown size"
 
-            self.title.setText(file.name)
-            self.hint.setWordWrap(False)
-            self.hint.setText(folder)
+            self.title.set_full_text(file.name)
+            self.title.setToolTip(file.name)
+            self.hint.set_full_text(str(file.parent))
             self.hint.setToolTip(str(file))
             self.detail.setText(f"{size}  ·  drop another file to replace it")
             self.detail.setVisible(True)
@@ -490,13 +563,13 @@ class DropZone(ClickableFrame):
 class AutoDesignPage(QWidget):
     """First page of the Auto Design wizard: the SAP2000 reference file."""
 
-    next_requested = Signal(str)  # path of the .sdb file
+    next_requested = Signal(str, str)  # reference .sdb path, first generation folder ("" = none)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
 
         self.setObjectName("page")
-        self.setStyleSheet(PAGE_STYLE)
+        self.setStyleSheet(PAGE_STYLE + FORM_STYLE)
 
         self._path: str | None = None
 
@@ -536,6 +609,8 @@ class AutoDesignPage(QWidget):
         self.zone.clicked.connect(self._browse)
         self.zone.file_dropped.connect(self._accept_path)
         layout.addWidget(self.zone, 1)
+        layout.addSpacing(14)
+        layout.addWidget(self._build_first_generation())
 
         self.error = QLabel("")
         self.error.setObjectName("pageError")
@@ -615,8 +690,61 @@ class AutoDesignPage(QWidget):
         outer.addLayout(grid)
 
         return card
-    
-    
+
+    # -----------------------------------------------------------------
+    # First generation folder (resume)
+    # -----------------------------------------------------------------
+
+    def _build_first_generation(self) -> QFrame:
+        card = QFrame()
+        card.setObjectName("formCard")
+
+        box = QVBoxLayout(card)
+        box.setContentsMargins(22, 16, 22, 14)
+        box.setSpacing(0)
+
+        self.firstGeneration = Field(
+            "Database Folder for the First Generation",
+            "Optional: a folder with one sub folder per SAP2000 model",
+        )
+        self.firstGeneration.edit.setClearButtonEnabled(True)
+
+        browse = QPushButton("Browse…")
+        browse.setIcon(folder_icon())  # same folder icon as the other pages
+        browse.setIconSize(QSize(20, 20))
+        browse.setToolTip("Choose the folder of the first generation")
+        browse.setCursor(Qt.CursorShape.PointingHandCursor)
+        browse.setMinimumHeight(self.firstGeneration.edit.sizeHint().height())
+        browse.clicked.connect(self._browse_first_generation)
+        self.firstGeneration.add_side_widget(browse)
+
+        hint = QLabel(
+            "Optional. To continue an earlier run, give the folder of its last generation. "
+            "When a folder is given it replaces the SAP2000 file above: the first sub folder "
+            "(by name) gives the reference model and the models are the starting population."
+        )
+        hint.setObjectName("dropDetail")
+        hint.setWordWrap(True)
+
+        box.addWidget(self.firstGeneration)
+        box.addWidget(hint)
+
+        return card
+
+    def _browse_first_generation(self) -> None:
+        text = self.firstGeneration.text()
+        start = text if text and Path(text).is_dir() else (
+            str(Path(self._path).parent) if self._path else str(Path.home())
+        )
+        folder = QFileDialog.getExistingDirectory(
+            self, "Select the folder of the first generation", start
+        )
+
+        if folder:
+            self.firstGeneration.edit.setText(str(Path(folder)))
+            self._show_error("")
+
+
     # -----------------------------------------------------------------
     # Actions
     # -----------------------------------------------------------------
@@ -648,8 +776,23 @@ class AutoDesignPage(QWidget):
         self.error.setText(message)
 
     def _on_next(self) -> None:
+        folder = self.firstGeneration.text()
+
+        if folder:
+            # The folder wins: the SAP2000 file above is not used.
+            try:
+                members = list_member_models(folder)
+            except ValueError as exc:
+                self.firstGeneration.set_error("This folder cannot be used.")
+                self._show_error(str(exc))
+                return
+
+            self._show_error("")
+            self.next_requested.emit(str(members[0][1]), str(Path(folder)))
+            return
+
         if not self._path:
-            self._show_error("Select the SAP2000 reference file.")
+            self._show_error("Select the SAP2000 reference file or the first generation folder.")
             return
 
         if not Path(self._path).is_file():
@@ -657,4 +800,4 @@ class AutoDesignPage(QWidget):
             return
 
         self._show_error("")
-        self.next_requested.emit(self._path)
+        self.next_requested.emit(self._path, "")

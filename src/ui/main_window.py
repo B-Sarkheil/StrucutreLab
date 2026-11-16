@@ -116,17 +116,17 @@ class TitleBar(QFrame):
         )
  
         return button
- 
+
     def toggle_maximize(self) -> None:
-        """Toggle between full screen and normal window state."""
+        """Toggle between maximized (taskbar visible) and normal window state."""
 
         if self.window.isFullScreen() or self.window.isMaximized():
             self.window.showNormal()
             self.maximize_button.setText("□")
         else:
-            self.window.showFullScreen()
+            self.window.showMaximized()
             self.maximize_button.setText("❐")
- 
+
     def mousePressEvent(self, event):
         """Start dragging the window."""
  

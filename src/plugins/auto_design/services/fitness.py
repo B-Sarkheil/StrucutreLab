@@ -43,6 +43,7 @@ from src.plugins.auto_design.services.deflection import (
     read_deflection_ratios,
 )
 from src.plugins.auto_design.services.design_results import (
+    read_steel_flexure_ratios,
     read_stress_ratios,
     read_total_weight,
 )
@@ -83,6 +84,8 @@ class Fitness:
     deflectionCount: int = 0  # number of beams with a deflection ratio
     stressRatios: dict[str, float] = field(default_factory=dict)      # frame -> stress ratio (not divided by the goal)
     deflectionRatios: dict[str, float] = field(default_factory=dict)  # frame -> deflection ratio
+    majorRatios: dict[str, float] = field(default_factory=dict)  # frame -> MMajRatio
+    minorRatios: dict[str, float] = field(default_factory=dict)  # frame -> MMinRatio
 
 
 # ---------------------------------------------------------------------
@@ -143,6 +146,7 @@ def fitness_calculator(
     weights: CvWeights | None = None,
     deflection: DeflectionSettings | None = None,
     dcr_goal: float = 1.0,
+    flexure_ratios: bool = False,
 ) -> Fitness:
     """Evaluate the SAP2000 model at `sap_path` (it is the open model, already saved).
 
@@ -175,6 +179,7 @@ def fitness_calculator(
 
     stress_ratios = read_stress_ratios(sap)
     deflection_ratios = read_deflection_ratios(sap, deflection) if use_deflection else {}
+    major_ratios, minor_ratios = read_steel_flexure_ratios(sap) if flexure_ratios else ({}, {})
 
 
     # The stress ratio is divided by the DCR goal BEFORE it is compared with the
@@ -205,6 +210,8 @@ def fitness_calculator(
         deflectionCount=len(bending),
         stressRatios=dict(stress_ratios),
         deflectionRatios=dict(deflection_ratios),
+        majorRatios=major_ratios,
+        minorRatios=minor_ratios,
     )
 
     sap.save_model_as(sap_path)  # keep the analysis and design results in the file

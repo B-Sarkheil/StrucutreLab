@@ -342,3 +342,19 @@ class SapClient:
             logger.warning("PropFrame.GetModifiers failed for section '%s'", section, exc_info=True)
 
         return 1.0
+
+    def table_keys(self) -> list[str]:
+        """Keys of all database tables available in the open model."""
+
+        result = self.model.DatabaseTables.GetAvailableTables(0, None, None, None)
+
+        # pythonnet returns (ret, NumberTables, TableKey, TableName, ImportType).
+        if not isinstance(result, tuple) or len(result) != 5:
+            raise SapError(f"Unexpected result of GetAvailableTables: {result!r}")
+
+        ret, count, keys = result[0], int(result[1]), result[2]
+
+        if ret != 0:
+            raise SapError("DatabaseTables.GetAvailableTables failed.")
+
+        return [str(key) for key in list(keys or [])[:count]]

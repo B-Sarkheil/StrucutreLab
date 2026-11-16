@@ -34,9 +34,12 @@ def generation_folder(models_folder: str | Path, generation: int) -> Path:
 
     return Path(models_folder) / f"{GENERATION_PREFIX}{generation}"
 
-
-def check_folder_usable(folder: str | Path, sap_path: str | Path) -> str | None:
-    """None when the folder may be used (and cleared), else the reason why not."""
+def check_folder_usable(
+    folder: str | Path, sap_path: str | Path, first_generation_folder: str | Path = ""
+) -> str | None:
+    """None when the folder may be used (and cleared), else the reason why not.
+    `first_generation_folder` is the folder of an earlier generation given for
+    a resume (empty = none): it must stay outside the database folder."""
 
     path = Path(folder).resolve()
 
@@ -59,8 +62,23 @@ def check_folder_usable(folder: str | Path, sap_path: str | Path) -> str | None:
                 "Choose another database folder."
             )
 
-    return None
+    if first_generation_folder:
+        first = Path(first_generation_folder).resolve()
 
+        if first == path or path in first.parents:
+            return (
+                "The first generation folder is inside the database folder, "
+                "and the database folder is cleared at the start of every run. "
+                "Choose another database folder."
+            )
+
+        if first in path.parents:
+            return (
+                "The database folder cannot be inside the first generation folder. "
+                "Choose another database folder."
+            )
+
+    return None
 
 def describe_folder(folder: str | Path) -> FolderState:
     path = Path(folder)

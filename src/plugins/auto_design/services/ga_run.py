@@ -65,8 +65,9 @@ from src.plugins.auto_design.services.population import (
 from src.plugins.auto_design.services.genetic_operators import crossover_swaps  # کنار بقیه
 from src.plugins.auto_design.services.mutation import mutate_child
 from src.plugins.auto_design.services.section_ordering import (
-    DEFLECTION, STRESS, read_section_properties, sort_strong_to_weak,
+    KINDS, read_section_properties, sort_strong_to_weak,
 )
+from src.plugins.auto_design.services.first_generation import list_member_models
 
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,7 @@ class GAContext:
     frameRoles: dict[str, str] = field(default_factory=dict)  # frame -> role (wizard, "Frame types" page)
     frameLinks: list[tuple[str, ...]] = field(default_factory=list)  # linked frames (wizard, step 4.1)
     constraints: ConstraintParams | None = None  # constraint settings (wizard, step 4.2)
+    firstGenerationFolder: str = ""  # resume: folder of an existing first generation ("" = random initial population)
     frameSections: dict[str, str] = field(default_factory=dict)  # frame -> section (step 6)
     jointCoordinates: dict[str, tuple[float, float, float]] = field(default_factory=dict)  # (step 7)
     frameConnectivity: dict[str, tuple[str, str]] = field(default_factory=dict)  # (step 7)
@@ -111,7 +113,9 @@ def prepare_database_folder(ctx: GAContext) -> None:
 
     ctx.monitor.status("Clearing the database folder")
 
-    problem = check_folder_usable(ctx.params.modelsFolder, ctx.sapPath)
+    problem = check_folder_usable(
+        ctx.params.modelsFolder, ctx.sapPath, ctx.firstGenerationFolder
+    )
 
     if problem:
         raise ValueError(problem)
@@ -252,6 +256,7 @@ def _evaluate(ctx: GAContext, path: Path):
         weights=ctx.cvWeights,
         deflection=ctx.deflection,
         dcr_goal=ctx.dcrGoal,
+        flexure_ratios=ctx.params.directedMutationPercent > 0,
     )
 
 
@@ -319,22 +324,12 @@ def _report_generation(ctx: GAContext, generation: int) -> None:
     )
 
 
-def step8_initial_population(ctx: GAContext) -> None:
-    """Step 8: build the first generation (reference model + random members).
-
-    Member 1 is the reference model; when frames are linked (step 4.1) and
-    the reference gives them different sections, member 1 is the REPAIRED
-    reference (the largest section of every group is given to the whole
-    group). The other members get one random section per unit.
-    """
-
-    # Final size is always even (members are paired later).
-    total = ctx.params.popSize + ctx.params.popSize % 2
-
-    # Whole run: N members of generation 1 + N children in each of the
-    # genSize - 1 iterations of step 9.
-    ctx.totalMembers = total * (1 + (ctx.params.genSize - 1))
-    ctx.doneMembers = 0
+def _prepare_dna(ctx: GAContext) -> int:
+    """Part of step 8 shared by the random start and the resume: check the
+    frame roles, build the deflection settings and the constraint settings, the
+    DNA (units), the allowed sections of every unit and, with directed
+    mutation, the strong -> weak orders. The reference model must be open.
+    Returns the number of linked frames."""
 
     # The role of every frame (column, beam, ...) was decided once, on the
     # "Frame types" page (step 3), from the reference model. Every frame read in
@@ -360,16 +355,16 @@ def step8_initial_population(ctx: GAContext) -> None:
 
     # The DNA: one unit per group of linked frames, one per other frame.
     ctx.units = build_units(ctx.frameSections, ctx.frameLinks)
-    unit_choices = unit_options(ctx.units, options)
-    ctx.unitChoices = unit_choices
+    ctx.unitChoices = unit_options(ctx.units, options)
 
     if ctx.params.directedMutationPercent > 0:
-        ctx.monitor.status("Reading I33 and Z33 of the sections for the directed mutation")
+        ctx.monitor.status("Reading Z33, Z22 and I33 of the sections for the directed mutation")
         properties = read_section_properties(ctx.sap)
         ctx.unitOrders = {
-            kind: [sort_strong_to_weak(c, properties, kind) for c in unit_choices]
-            for kind in (STRESS, DEFLECTION)
+            kind: [sort_strong_to_weak(c, properties, kind) for c in ctx.unitChoices]
+            for kind in KINDS
         }
+
     linked_frames = sum(len(unit) for unit in ctx.units if len(unit) > 1)
 
     logger.info(
@@ -379,6 +374,29 @@ def step8_initial_population(ctx: GAContext) -> None:
         sum(len(unit) > 1 for unit in ctx.units),
         linked_frames,
     )
+
+    return linked_frames
+
+
+def step8_initial_population(ctx: GAContext) -> None:
+    """Step 8: build the first generation (reference model + random members).
+
+    Member 1 is the reference model; when frames are linked (step 4.1) and
+    the reference gives them different sections, member 1 is the REPAIRED
+    reference (the largest section of every group is given to the whole
+    group). The other members get one random section per unit.
+    """
+
+    # Final size is always even (members are paired later).
+    total = ctx.params.popSize + ctx.params.popSize % 2
+
+    # Whole run: N members of generation 1 + N children in each of the
+    # genSize - 1 iterations of step 9.
+    ctx.totalMembers = total * (1 + (ctx.params.genSize - 1))
+    ctx.doneMembers = 0
+
+    linked_frames = _prepare_dna(ctx)
+    unit_choices = ctx.unitChoices
 
     # Member 1: the reference model, repaired when the links ask for it.
     reference_genes = dict(ctx.frameSections)
@@ -436,6 +454,86 @@ def step8_initial_population(ctx: GAContext) -> None:
 
     # best member of generation 1 by the GA ranking (same member the run page uses as its base)
     ctx.firstBestFitness = min(ctx.population, key=lambda m: ranking_key(m.fitness)).fitness
+
+    _report_generation(ctx, 1)
+
+
+def step8_resume_population(ctx: GAContext) -> None:
+    """Step 8 of a resume: the random initial population is NOT built. The
+    models of the first generation folder (one sub folder per model, natural
+    order of the names) are copied to Generation-1 as Gen-1-1 ... Gen-1-P and
+    every copy is evaluated (the genes are read from the model, and the
+    fitness is needed for the ranking and the directed mutation). The first
+    model is the reference model of the run (`ctx.sapPath`). The run goes on
+    with step 9."""
+
+    models = list_member_models(ctx.firstGenerationFolder)
+    count = len(models)
+
+    if count != ctx.params.popSize:
+        raise ValueError(
+            f"The first generation folder holds {count} models but the population size is "
+            f"{ctx.params.popSize}. The folder changed after the settings were made: "
+            "go back and check the settings again."
+        )
+
+    pairs_size = count + count % 2  # N used by step 9 (even)
+
+    # Whole run: the P models of generation 1 + N children in each of the
+    # genSize - 1 iterations of step 9.
+    ctx.totalMembers = count + (ctx.params.genSize - 1) * pairs_size
+    ctx.doneMembers = 0
+
+    _prepare_dna(ctx)  # the reference model is still open here
+
+    generation_dir = Path(ctx.params.modelsFolder) / "Generation-1"
+    reference_frames = set(ctx.frameSections)
+
+    ctx.population = []
+    ctx.generation = 1
+
+    for position, (source_name, source) in enumerate(models, start=1):
+        name = member_name(1, position)
+
+        ctx.monitor.status(
+            f"Generation 1: copying and evaluating model {position} of {count} ({source_name})"
+        )
+
+        path = copy_member_model(source, generation_dir / name, name)
+
+        ctx.sap.open_model(path)
+        found = read_frame_sections(ctx.sap)
+
+        if set(found) != reference_frames:
+            missing = sorted(reference_frames - set(found))[:5]
+            extra = sorted(set(found) - reference_frames)[:5]
+            raise ValueError(
+                f"The model of '{source_name}' does not have the same frames as the reference "
+                f"model (missing: {missing}, extra: {extra}). All models of the first "
+                "generation must have the same structure."
+            )
+
+        genes = {frame: found[frame] for frame in ctx.frameSections}  # reference frame order
+
+        broken = sum(len({genes[f] for f in unit}) > 1 for unit in ctx.units if len(unit) > 1)
+
+        if broken:
+            logger.warning(
+                "Step 8 - %s: %d group(s) of linked frames do not have one section", name, broken
+            )
+
+        individual = Individual(name, path, genes)
+        individual.fitness = _evaluate(ctx, path)
+        _member_done(ctx)
+        ctx.population.append(individual)
+
+    ctx.referenceFitness = ctx.population[0].fitness
+    ctx.firstBestFitness = min(ctx.population, key=lambda m: ranking_key(m.fitness)).fitness
+
+    logger.info(
+        "Step 8 - resume: %d models of %s copied to %s (random initial population skipped)",
+        count, ctx.firstGenerationFolder, generation_dir,
+    )
 
     _report_generation(ctx, 1)
 
@@ -570,9 +668,8 @@ def run_ga(ctx: GAContext) -> None:
         step5_material_types,
         step6_frame_sections,
         step7_geometry,
-        step8_initial_population,
+        step8_resume_population if ctx.firstGenerationFolder else step8_initial_population,
         step9_generations,
-        # TODO: the step after the typing page
     )
 
     ctx.monitor.progress(0.0)
