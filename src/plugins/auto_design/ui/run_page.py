@@ -639,11 +639,15 @@ class EvolutionChart(QWidget):
         lo, hi = min(values), max(values)
         non_negative = lo >= 0.0
 
-        if hi - lo < 1e-9:
-            pad = abs(hi) * 0.05 or 1.0
-        else:
-            pad = (hi - lo) * 0.14
+        # Never zoom in below 2 % of the value: a difference of numeric noise
+        # must not look like a real trend.
+        floor_span = max(abs(lo), abs(hi)) * 0.02 or 1.0
 
+        if hi - lo < floor_span:
+            middle = (hi + lo) / 2
+            lo, hi = middle - floor_span / 2, middle + floor_span / 2
+
+        pad = (hi - lo) * 0.14
         lo, hi = lo - pad, hi + pad
 
         if non_negative and lo < 0.0:
@@ -1590,7 +1594,7 @@ class RunPage(QWidget):
             change = (stats.bestWeight - first) / first * 100.0
             color = GREEN if change < -1e-9 else (DANGER if change > 1e-9 else None)
             self.tile_change.set_value(
-                f"{change:+.1f} %", f"vs generation {self._first_generation}", color
+                f"{change:+.2f} %", f"vs generation {self._first_generation}", color
             )
 
         self.tile_ratio.set_value(f"{stats.meanRatio:.3f}", f"max {stats.maxRatio:.3f}")

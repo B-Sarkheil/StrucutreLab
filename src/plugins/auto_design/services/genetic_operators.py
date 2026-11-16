@@ -58,20 +58,48 @@ def tournament_parents(
     return ranked[0], ranked[1]
 
 
+def _design_key(individual: Individual) -> tuple:
+    """Hashable key of the design of a member (its genes)."""
+
+    return tuple(sorted(individual.genes.items()))
+
+
 def select_survivors(
     pool: Sequence[Individual],
     rank: Rank,
     count: int,
 ) -> list[Individual]:
-    """Step 9.2: the `count` members of `pool` with the best (smallest)
-    `rank`, best first. On equal ranks the member that comes first in
-    `pool` wins (so put the parents before the children).
+    """Step 9.2: the `count` best members of `pool`, best first.
+
+    Different designs are preferred: a member whose genes equal those of a
+    better member already kept is a duplicate and is used only when there
+    are not enough different designs to fill `count` places. On equal ranks
+    the member that comes first in `pool` wins (put the parents before the
+    children).
     """
 
     if count > len(pool):
         raise ValueError(f"Cannot keep {count} members out of {len(pool)}.")
 
-    return sorted(pool, key=rank)[:count]  # stable sort
+    chosen: list[Individual] = []
+    repeats: list[Individual] = []
+    seen: set[tuple] = set()
+
+    for member in sorted(pool, key=rank):  # stable sort, best first
+        key = _design_key(member)
+
+        if key in seen:
+            repeats.append(member)
+            continue
+
+        seen.add(key)
+        chosen.append(member)
+
+        if len(chosen) == count:
+            return chosen
+
+    # Not enough different designs: fill with the best duplicates.
+    return sorted(chosen + repeats[: count - len(chosen)], key=rank)
 
 
 def random_cut_points(geneCount: int, rng: random.Random) -> tuple[int, int, int]:
