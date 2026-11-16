@@ -86,6 +86,7 @@ class Fitness:
     deflectionRatios: dict[str, float] = field(default_factory=dict)  # frame -> deflection ratio
     majorRatios: dict[str, float] = field(default_factory=dict)  # frame -> MMajRatio
     minorRatios: dict[str, float] = field(default_factory=dict)  # frame -> MMinRatio
+    axialRatios: dict[str, float] = field(default_factory=dict)  # frame -> PRatio
 
 
 # ---------------------------------------------------------------------
@@ -153,7 +154,9 @@ def fitness_calculator(
     Runs the analysis and the steel and concrete design, reads W and CV,
     and saves the model again so the file keeps the results. With
     `deflection` the beams also get a deflection ratio (the output stations
-    of the beams are set first; this needs the model unlocked).
+    of the beams are set first; this needs the model unlocked). With
+    `flexure_ratios` the major flexure, minor flexure and axial ratios of the
+    steel frames are read too (needed by the directed mutation).
     """
 
     weights = weights or CvWeights()
@@ -179,7 +182,9 @@ def fitness_calculator(
 
     stress_ratios = read_stress_ratios(sap)
     deflection_ratios = read_deflection_ratios(sap, deflection) if use_deflection else {}
-    major_ratios, minor_ratios = read_steel_flexure_ratios(sap) if flexure_ratios else ({}, {})
+    major_ratios, minor_ratios, axial_ratios = (
+        read_steel_flexure_ratios(sap) if flexure_ratios else ({}, {}, {})
+    )
 
 
     # The stress ratio is divided by the DCR goal BEFORE it is compared with the
@@ -212,6 +217,7 @@ def fitness_calculator(
         deflectionRatios=dict(deflection_ratios),
         majorRatios=major_ratios,
         minorRatios=minor_ratios,
+        axialRatios=axial_ratios,
     )
 
     sap.save_model_as(sap_path)  # keep the analysis and design results in the file

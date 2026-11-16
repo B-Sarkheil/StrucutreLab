@@ -62,7 +62,7 @@ from src.plugins.auto_design.services.population import (
     build_gene_options,
     member_name,
 )
-from src.plugins.auto_design.services.genetic_operators import crossover_swaps  # کنار بقیه
+from src.plugins.auto_design.services.genetic_operators import crossover_swaps
 from src.plugins.auto_design.services.mutation import mutate_child
 from src.plugins.auto_design.services.section_ordering import (
     KINDS, read_section_properties, sort_strong_to_weak,
@@ -358,7 +358,7 @@ def _prepare_dna(ctx: GAContext) -> int:
     ctx.unitChoices = unit_options(ctx.units, options)
 
     if ctx.params.directedMutationPercent > 0:
-        ctx.monitor.status("Reading Z33, Z22 and I33 of the sections for the directed mutation")
+        ctx.monitor.status("Reading Z33, Z22, I33 and Area of the sections for the directed mutation")
         properties = read_section_properties(ctx.sap)
         ctx.unitOrders = {
             kind: [sort_strong_to_weak(c, properties, kind) for c in ctx.unitChoices]

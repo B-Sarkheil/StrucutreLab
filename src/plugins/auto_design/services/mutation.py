@@ -12,7 +12,20 @@ is one frame or a group of linked frames, see `gene_groups.py`):
                                                 r_gov > 2.0          3 steps stronger
 
    r_gov = max(stress ratio / DCR goal, deflection ratio) of the frame. The
-   KIND of the larger one decides the order: deflection -> I33, stress -> Z33.
+   KIND of the larger one decides the order:
+
+       deflection                      -> I33
+       stress, MMajRatio is the largest -> Z33
+       stress, MMinRatio is the largest -> Z22
+       stress, PRatio is the largest    -> Area
+
+   The three stress components are compared at the governing load combination
+   of the frame (they come from one row of the steel design table, see
+   `design_results.read_steel_flexure_ratios`). A frame without them (for
+   example a concrete frame) uses Z33. On a tie the order of the list above
+   wins (deflection loses to stress, then Z33, Z22, Area).
+   The orders only contain the sections allowed for the unit (type of the
+   frames and Material Type), so a step never leaves the allowed sections.
 2. Random mutation: `randomPercent` % of the units, chosen among the units NOT
    chosen for the directed mutation, get a new random allowed section.
 
@@ -27,7 +40,9 @@ from collections.abc import Sequence
 
 from src.plugins.auto_design.services.fitness import Fitness
 from src.plugins.auto_design.services.section_ordering import (
+    AXIAL,
     DEFLECTION,
+    MINOR,
     STRESS,
     step_section,
 )
@@ -49,11 +64,36 @@ def weaker_steps(r_gov: float) -> int:
     return -3
 
 
+def stress_order_kind(fitness: Fitness, frame: str) -> str:
+    """Order kind used when the STRESS ratio of `frame` governs: the largest of
+    MMajRatio (STRESS, Z33), MMinRatio (MINOR, Z22) and PRatio (AXIAL, Area).
+    On a tie the first of that list wins. STRESS (Z33) when the frame has none
+    of the three."""
+
+    candidates = (
+        (fitness.majorRatios.get(frame), STRESS),
+        (fitness.minorRatios.get(frame), MINOR),
+        (fitness.axialRatios.get(frame), AXIAL),
+    )
+
+    best: tuple[float, str] | None = None
+
+    for value, kind in candidates:
+        if value is None:
+            continue
+
+        if best is None or value > best[0]:
+            best = (value, kind)
+
+    return best[1] if best is not None else STRESS
+
+
 def unit_governing(
     unit: Sequence[str], fitness: object, dcr_goal: float
 ) -> tuple[float, str] | None:
-    """(largest r_gov of the frames of the unit, kind of that ratio), or None
-    when the parent has no ratio for these frames. On a tie stress wins."""
+    """(largest r_gov of the frames of the unit, order kind of that ratio), or
+    None when the parent has no ratio for these frames. On a tie stress wins
+    over deflection."""
 
     if not isinstance(fitness, Fitness):
         return None
@@ -66,7 +106,7 @@ def unit_governing(
         deflection = fitness.deflectionRatios.get(frame)
 
         if stress is not None:
-            candidates.append((stress / dcr_goal, STRESS))
+            candidates.append((stress / dcr_goal, stress_order_kind(fitness, frame)))
 
         if deflection is not None:
             candidates.append((deflection, DEFLECTION))

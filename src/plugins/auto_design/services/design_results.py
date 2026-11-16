@@ -220,11 +220,11 @@ def read_stress_ratios(client: SapClient) -> dict[str, float]:
     return result
 
 # ---------------------------------------------------------------------
-# Major / minor axis flexure ratios at the governing point (directed mutation)
+# Major flexure / minor flexure / axial ratios at the governing point (directed mutation)
 # ---------------------------------------------------------------------
 
-# Prefix of the steel design table that holds MMajRatio and MMinRatio. The
-# rest of the key is the design code name, so the table is found by prefix.
+# Prefix of the steel design table that holds MMajRatio, MMinRatio and PRatio.
+# The rest of the key is the design code name, so the table is found by prefix.
 FLEXURE_TABLE_PREFIX = "Steel Design 2 - PMM Details"
 
 _FLEXURE_WARNED: set[str] = set()
@@ -258,14 +258,19 @@ def _read_steel_governing_points(client: SapClient) -> dict[str, tuple[str, floa
     return result
 
 
-def read_steel_flexure_ratios(client: SapClient) -> tuple[dict[str, float], dict[str, float]]:
-    """(frame -> MMajRatio, frame -> MMinRatio) of the steel frames, both taken
-    from ONE row of the PMM table: the row of the governing load combination
-    (the one that gives the DCR) whose location is closest to the governing
-    location. The two ratios are never mixed between different combinations.
+def read_steel_flexure_ratios(
+    client: SapClient,
+) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
+    """(frame -> MMajRatio, frame -> MMinRatio, frame -> PRatio) of the steel
+    frames, all taken from ONE row of the PMM table: the row of the governing
+    load combination (the one that gives the DCR) whose location is closest to
+    the governing location. The ratios are never mixed between different
+    combinations.
+
     When the table, a field or the governing point is not found, the frame is
     left out (the directed mutation then falls back to Z33); a problem with
-    the whole table gives two empty dicts and one warning in the log."""
+    the whole table gives three empty dicts and one warning in the log. A
+    frame whose row has no readable PRatio is left out of the third dict only."""
 
     try:
         table = next(
@@ -278,8 +283,9 @@ def read_steel_flexure_ratios(client: SapClient) -> tuple[dict[str, float], dict
 
         governing = _read_steel_governing_points(client)
 
-        # frame -> (distance to the governing location, -largest flexure ratio, major, minor)
-        chosen: dict[str, tuple[float, float, float, float]] = {}
+        # frame -> (distance to the governing location, -largest of the three ratios,
+        #           major, minor, axial or None)
+        chosen: dict[str, tuple[float, float, float, float, float | None]] = {}
 
         for row in client.read_table(table):
             frame = pick_field(row, "Frame", table)
@@ -300,22 +306,28 @@ def read_steel_flexure_ratios(client: SapClient) -> tuple[dict[str, float], dict
                 continue
 
             try:
+                axial: float | None = float(pick_field(row, "PRatio", table).replace(",", "."))
+            except (SapError, ValueError):
+                axial = None
+
+            try:
                 distance = abs(float(pick_field(row, "Location", table).replace(",", ".")) - location)
             except ValueError:
                 distance = 0.0
 
-            key = (distance, -max(major, minor), major, minor)
+            key = (distance, -max(major, minor, axial or 0.0), major, minor, axial)
 
             if frame not in chosen or key[:2] < chosen[frame][:2]:
                 chosen[frame] = key
     except SapError as exc:
         if str(exc) not in _FLEXURE_WARNED:
             _FLEXURE_WARNED.add(str(exc))
-            logger.warning("Major/minor flexure ratios not available (Z33 is used): %s", exc)
+            logger.warning("Major/minor/axial ratios not available (Z33 is used): %s", exc)
 
-        return {}, {}
+        return {}, {}, {}
 
     return (
         {frame: values[2] for frame, values in chosen.items()},
         {frame: values[3] for frame, values in chosen.items()},
+        {frame: values[4] for frame, values in chosen.items() if values[4] is not None},
     )

@@ -2,12 +2,21 @@
 
 The order depends on the kind of the governing ratio of a unit:
 
-* STRESS      (DCR)       -> plastic modulus about axis 3-3, field `Z33`,
-* DEFLECTION  (beam drift) -> moment of inertia about axis 3-3, field `I33`.
+* STRESS      (major axis flexure, MMajRatio)  -> plastic modulus about axis 3-3, field `Z33`,
+* MINOR       (minor axis flexure, MMinRatio)  -> plastic modulus about axis 2-2, field `Z22`,
+* AXIAL       (axial force, PRatio)            -> cross-section area, field `Area`,
+* DEFLECTION  (beam drift)                     -> moment of inertia about axis 3-3, field `I33`.
 
-A bigger value is a stronger section. Both values are read from the SAP2000
+STRESS is also the fallback kind when a frame has no major / minor / axial
+ratios (for example a concrete frame).
+
+A bigger value is a stronger section. All values are read from the SAP2000
 table `Frame Section Properties 01 - General` (model open, kgf-m-C units).
 A section whose value is missing or not a number counts as 0 (the weakest).
+
+The orders are always built from the sections allowed for a unit (allowed for
+the type of its frames and of the same Material Type), see
+`gene_groups.unit_options`, so a step never leaves the allowed sections.
 """
 from __future__ import annotations
 
@@ -21,15 +30,17 @@ from src.plugins.auto_design.services.section_materials import SECTION_TABLE
 logger = logging.getLogger(__name__)
 
 STRESS = "stress"
+MINOR = "minor"
+AXIAL = "axial"
 DEFLECTION = "deflection"
-KINDS = (STRESS, DEFLECTION)
+KINDS = (STRESS, MINOR, AXIAL, DEFLECTION)
 
 # kind -> field of the section table used to sort
-ORDER_FIELD = {STRESS: "Z33", DEFLECTION: "I33"}
+ORDER_FIELD = {STRESS: "Z33", MINOR: "Z22", AXIAL: "Area", DEFLECTION: "I33"}
 
 
 def read_section_properties(client: SapClient) -> dict[str, dict[str, float]]:
-    """Section name -> {STRESS: Z33, DEFLECTION: I33}."""
+    """Section name -> {kind: value of its order field} for every kind in KINDS."""
 
     result: dict[str, dict[str, float]] = {}
 
@@ -57,7 +68,8 @@ def sort_strong_to_weak(
     sections: Iterable[str], properties: dict[str, dict[str, float]], kind: str
 ) -> list[str]:
     """The sections (without repeats) from the strongest to the weakest by
-    `kind` (STRESS: Z33, DEFLECTION: I33). Equal values: by name."""
+    `kind` (STRESS: Z33, MINOR: Z22, AXIAL: Area, DEFLECTION: I33). Equal
+    values: by name."""
 
     if kind not in ORDER_FIELD:
         raise ValueError(f"Unknown order kind '{kind}'.")
