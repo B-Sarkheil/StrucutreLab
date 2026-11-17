@@ -309,12 +309,14 @@ class AutoDesignWizard(QStackedWidget):
             "Constraint settings accepted: DCR goal=%.4g, deflection goal=L/%d, "
             "element coefficient=%.4g, general coefficient=%.4g, "
             "deflection combination=%s, update seismic loads=%s",
+            "columnWidthRule=%s",
             constraints.dcrGoal,
             constraints.deflectionDivisor,
             constraints.elementCoefficient,
             constraints.generalCoefficient,
             constraints.deflectionCombo,
             constraints.updateSeismicLoads,
+            constraints.columnWidthRule
         )
 
         self._show_ga_settings()

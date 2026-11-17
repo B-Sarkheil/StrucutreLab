@@ -13,8 +13,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from collections.abc import Sequence
-
-from src.plugins.auto_design.services.fitness import ranking_key
+from src.plugins.auto_design.services.fitness import selection_key
 from src.plugins.auto_design.services.population import (
     BEAM,
     COLUMN,
@@ -31,7 +30,7 @@ def best_individual(population: Sequence[Individual]) -> Individual:
     if not population:
         raise ValueError("The population is empty.")
 
-    return min(population, key=lambda member: ranking_key(member.fitness))
+    return min(population, key=lambda member: selection_key(member))
 
 
 def _natural_key(name: str) -> list:

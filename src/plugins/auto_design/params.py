@@ -27,6 +27,7 @@ class ConstraintParams:
     generalCoefficient: float = 1.0  # General Constraint Coefficient (Drift), > 0
     deflectionCombo: str = ""  # load combination of the deflection check
     updateSeismicLoads: bool = False  # update the seismic loads of every offspring model
+    columnWidthRule: bool = True  # columns at least as wide as the flange of their beams (step 8.0 / 9.1.6)
 
 
 @dataclass(frozen=True)

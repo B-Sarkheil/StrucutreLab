@@ -37,7 +37,8 @@ from src.plugins.auto_design.services.model_geometry import (
     read_frame_connectivity,
     read_joint_coordinates,
 )
-from src.plugins.auto_design.services.fitness import CvWeights, fitness_calculator, ranking_key
+from src.plugins.auto_design.services.fitness import CvWeights, fitness_calculator, ranking_key, selection_key
+
 from src.plugins.auto_design.services.gene_groups import (
     build_units,
     random_unit_genes,
@@ -58,6 +59,7 @@ from src.plugins.auto_design.services.database_folder import (
 from src.plugins.auto_design.services.deflection import DeflectionSettings
 from src.plugins.auto_design.services.population import (
     BEAM,
+    COLUMN,
     Individual,
     build_gene_options,
     member_name,
@@ -68,6 +70,10 @@ from src.plugins.auto_design.services.section_ordering import (
     KINDS, read_section_properties, sort_strong_to_weak,
 )
 from src.plugins.auto_design.services.first_generation import list_member_models
+from src.plugins.auto_design.services.column_width_rule import (
+    ColumnRule, build_column_links, count_violations, prune_beam_options,
+    read_section_dimensions, repair_columns,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -105,6 +111,7 @@ class GAContext:
     doneMembers: int = 0  # members evaluated so far (progress)
     unitChoices: list[list[str]] = field(default_factory=list)  # allowed sections of every unit (step 8)
     unitOrders: dict[str, list[list[str]]] = field(default_factory=dict)  # kind -> strong->weak list per unit (step 8)
+    columnRule: ColumnRule | None = None  # column width / height rule (step 8.0), None = off
 
 
 def prepare_database_folder(ctx: GAContext) -> None:
@@ -307,7 +314,8 @@ def _report_generation(ctx: GAContext, generation: int) -> None:
     def rank(individual: Individual):
         return ranking_key(individual.fitness)
 
-    best = min(ctx.population, key=rank)  # the best member by the GA ranking
+    best = min(ctx.population, key=selection_key)
+    
     mean_weight = sum(m.fitness.weight for m in ctx.population) / len(ctx.population)
 
     ctx.monitor.generation(
@@ -322,6 +330,42 @@ def _report_generation(ctx: GAContext, generation: int) -> None:
             bestName=best.name,
         )
     )
+
+
+def _apply_column_rule(ctx: GAContext, options: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Step 8.0: prune the beam options and build the column rule data.
+    The reference model must be open."""
+
+    dims = read_section_dimensions(ctx.sap)
+    column_sections = [s.name for s in ctx.sections if s.allowedForColumn]
+    options, removed = prune_beam_options(options, ctx.frameRoles, dims, column_sections)
+
+    links = build_column_links(
+        ctx.frameRoles, ctx.frameConnectivity, ctx.jointCoordinates, ctx.sap.frame_local_axes
+    )
+    ctx.columnRule = ColumnRule(
+        columns=frozenset(f for f, role in ctx.frameRoles.items() if role == COLUMN),
+        links=links,
+        dims=dims,
+        areas=read_section_areas(ctx.sap),
+    )
+
+    logger.info(
+        "Step 8.0 - column width rule: %d columns with beams (%d beams linked), "
+        "%d beam option(s) removed",
+        len(links), sum(len(v) for v in links.values()), removed,
+    )
+
+    return options
+
+
+def _rule_violations(ctx: GAContext, genes: dict[str, str]) -> int:
+    return count_violations(genes, ctx.columnRule) if ctx.columnRule is not None else 0
+
+
+def _mark_rule_violations(ctx: GAContext) -> None:
+    for member in ctx.population:
+        member.ruleViolations = _rule_violations(ctx, member.genes)
 
 
 def _prepare_dna(ctx: GAContext) -> int:
@@ -352,6 +396,12 @@ def _prepare_dna(ctx: GAContext) -> int:
     ctx.monitor.status("Preparing the allowed sections of every frame")
 
     options = build_gene_options(ctx.frameSections, ctx.frameRoles, ctx.sections)
+
+    ctx.columnRule = None
+
+    if ctx.constraints is not None and ctx.constraints.columnWidthRule:
+        ctx.monitor.status("Step 8.0: preparing the column width / height rule")
+        options = _apply_column_rule(ctx, options)
 
     # The DNA: one unit per group of linked frames, one per other frame.
     ctx.units = build_units(ctx.frameSections, ctx.frameLinks)
@@ -453,7 +503,8 @@ def step8_initial_population(ctx: GAContext) -> None:
     )
 
     # best member of generation 1 by the GA ranking (same member the run page uses as its base)
-    ctx.firstBestFitness = min(ctx.population, key=lambda m: ranking_key(m.fitness)).fitness
+    _mark_rule_violations(ctx)  # generation 1 is not repaired: only marked
+    ctx.firstBestFitness = min(ctx.population, key=selection_key).fitness
 
     _report_generation(ctx, 1)
 
@@ -524,6 +575,7 @@ def step8_resume_population(ctx: GAContext) -> None:
 
         individual = Individual(name, path, genes)
         individual.fitness = _evaluate(ctx, path)
+        individual.ruleViolations = _rule_violations(ctx, genes)
         _member_done(ctx)
         ctx.population.append(individual)
 
@@ -544,12 +596,26 @@ def step9_generations(ctx: GAContext) -> None:
     9.1  Pair m = 1 .. N/2 (N = even population size) gives two children.
          The children are built INSIDE Generation-g, next to their parents,
          as members N+1 .. 2N (Gen-g-(N+1) ... Gen-g-2N): Generation-g then
-         holds 2N members. The crossover works on the units of the DNA
+         holds 2N members. All the operators work on the units of the DNA
          (`ctx.units`): the number of genes is the number of units, and the
          frames of a unit always come from the same parent.
-    9.2  The N members with the highest fitness of those 2N are copied to
+         9.1.1 / 9.1.2  tournament selection of the two parents,
+         9.1.3          three random cut points,
+         9.1.4          three-point crossover,
+         9.1.5          directed and random mutation of each child,
+         9.1.6          column width / height rule: the columns of each child
+                        are repaired (only when the rule is switched on in
+                        the constraint settings, see `column_width_rule.py`),
+         9.1.7          model and fitness of both children.
+    9.2  The N best members of those 2N (`selection_key`: a member that
+         breaks the column width / height rule is behind every member that
+         does not, then the feasible / infeasible ranking) are copied to
          Generation-(g+1) (renamed Gen-(g+1)-1 ... Gen-(g+1)-N, best first)
          and become the population of the next iteration.
+
+    Generation 1 is not repaired (it is only marked); the rule is applied to
+    every child, so from generation 2 on the members that break it are
+    ranked last and normally disappear at step 9.2.
 
     9.3 and later are not written.
     """
@@ -589,6 +655,7 @@ def step9_generations(ctx: GAContext) -> None:
             directed = ctx.params.directedMutationPercent
             randomly = ctx.params.randomMutationPercent
 
+            # 9.1.5  directed and random mutation
             if directed > 0 or randomly > 0:
                 swaps = crossover_swaps(len(units), cuts)
                 sources = (
@@ -606,7 +673,19 @@ def step9_generations(ctx: GAContext) -> None:
                 g, m, parent_a.name, parent_b.name, cuts,
             )
 
-            # 9.1.5  model and fitness of both children (members N+1 .. 2N)
+            # 9.1.6  column width / height rule: repair the columns of both children
+            if ctx.columnRule is not None:
+                repaired = [
+                    repair_columns(child, units, ctx.unitChoices, ctx.columnRule)
+                    for child in children
+                ]
+                children = tuple(genes for genes, _count in repaired)
+                logger.info(
+                    "Step 9.1.6 - g=%d m=%d: column repair changed %d and %d unit(s)",
+                    g, m, repaired[0][1], repaired[1][1],
+                )
+
+            # 9.1.7  model and fitness of both children (members N+1 .. 2N)
             for offset, genes in enumerate(children):
                 member = total + 2 * (m - 1) + 1 + offset
                 ctx.monitor.status(
@@ -618,7 +697,7 @@ def step9_generations(ctx: GAContext) -> None:
             "Step 9.1 - g=%d: %d children in Generation-%d", g, len(ctx.offspring), g
         )
 
-        _step9_2_next_generation(ctx, g, total, rank)
+        _step9_2_next_generation(ctx, g, total, selection_key)
         _report_generation(ctx, g + 1)
 
 
@@ -651,7 +730,9 @@ def _step9_2_next_generation(ctx: GAContext, g: int, size: int, rank) -> None:
 
         name = member_name(g + 1, position)
         path = copy_member_model(individual.path, generation_dir / name, name)
-        next_population.append(Individual(name, path, dict(individual.genes), individual.fitness))
+        next_population.append(
+            Individual(name, path, dict(individual.genes), individual.fitness, individual.ruleViolations)
+        )
 
     ctx.population = next_population
     ctx.offspring = []

@@ -1,4 +1,4 @@
-"""Auto Design - step 9.1.4: directed and random mutation of a child (no Qt, no SAP).
+"""Auto Design - step 9.1.5: directed and random mutation of a child (no Qt, no SAP).
 
 After the crossover a child gets two kinds of mutation, both on UNITS (a unit
 is one frame or a group of linked frames, see `gene_groups.py`):

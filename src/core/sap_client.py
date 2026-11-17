@@ -309,6 +309,20 @@ class SapClient:
             for case, step, sta, m in zip(cases, steps, stations, moments)
         ]
 
+    def frame_local_axes(self, frame: str) -> tuple[float, bool]:
+        """(Ang in degrees, Advanced flag) of the local axes of one frame."""
+
+        result = self.model.FrameObj.GetLocalAxes(frame, 0.0, False)
+
+        # pythonnet returns (ret, Ang, Advanced) for the ref parameters.
+        if not isinstance(result, tuple) or len(result) != 3:
+            raise SapError(f"Unexpected result of FrameObj.GetLocalAxes: {result!r}")
+
+        if result[0] != 0:
+            raise SapError(f"FrameObj.GetLocalAxes failed for frame '{frame}'.")
+
+        return float(result[1]), bool(result[2])
+
     def frame_i33_modifier(self, frame: str) -> float:
         """I33 property modifier assigned to one frame (1.0 when it cannot be read).
         FrameObj.GetModifiers gives 8 values: Area, As2, As3, Torsion, I22, I33, Mass, Weight."""

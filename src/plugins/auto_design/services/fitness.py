@@ -255,3 +255,10 @@ def ranking_key(fitness: object | None, epsilon: float = CV_EPSILON) -> tuple[in
         return (0, fitness.weight)
 
     return (1, fitness.cv)
+
+def selection_key(member: object) -> tuple[int, tuple[int, float]]:
+    """Sort key of the selection of survivors and of the final member: a member
+    that breaks the column width / height rule is behind every member that does
+    not (like CV = infinity), then `ranking_key`. Smaller is better."""
+
+    return (1 if getattr(member, "ruleViolations", 0) else 0, ranking_key(member.fitness))

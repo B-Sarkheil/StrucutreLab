@@ -654,6 +654,7 @@ class AutoDesignPage(QWidget):
         "The geometry of the structure follows the reference model and will not change.",
         "The material of each element is decided by the section assigned to it in this file.",
         "All designs use the design combinations selected in this file.",
+        "Columns are divided where the beams are connected.",
     )
 
     def _build_assumptions(self) -> QFrame:

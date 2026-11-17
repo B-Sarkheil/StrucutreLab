@@ -256,6 +256,16 @@ class ConstraintSettingsPage(QWidget):
         self.updateSeismicLoads.setChecked(False)
         card_layout.addWidget(self.updateSeismicLoads, 0, Qt.AlignmentFlag.AlignLeft)
 
+        card_layout.addSpacing(10)
+        self.columnWidthRule = FancyCheckBox("Always select columns with higher width/height against beams")
+        self.columnWidthRule.setChecked(True)
+        self.columnWidthRule.setToolTip(
+            "Column flange width (or depth, for beams that meet the web) must be at least the "
+            "flange width of the connected beams. Beam options wider than every allowed "
+            "column section are removed, and the columns of every child are repaired."
+        )
+        card_layout.addWidget(self.columnWidthRule, 0, Qt.AlignmentFlag.AlignLeft)
+
         layout.addWidget(card)
         layout.addSpacing(28)
 
@@ -405,5 +415,6 @@ class ConstraintSettingsPage(QWidget):
                 generalCoefficient=general,
                 deflectionCombo=str(combo),
                 updateSeismicLoads=self.updateSeismicLoads.isChecked(),
+                columnWidthRule=self.columnWidthRule.isChecked(),
             )
         )

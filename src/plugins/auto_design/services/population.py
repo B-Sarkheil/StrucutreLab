@@ -51,6 +51,7 @@ class Individual:
     path: Path  # the .sdb file of this member
     genes: dict[str, str]  # frame -> section
     fitness: object | None = None  # result of fitness_calculator (later steps)
+    ruleViolations: int = 0  # column frames that break the column width / height rule
 
 
 def member_name(generation: int, member: int) -> str:
