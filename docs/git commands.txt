@@ -2,7 +2,7 @@ cd "D:\Python Library\StructureLab"
 
 
 git add .
-git commit -m "Change the title of chart hover"
+git commit -m "Add constriant of height/width of column against beam width"
 git push origin main
 
 
