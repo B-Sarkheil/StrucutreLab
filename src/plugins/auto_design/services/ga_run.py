@@ -332,6 +332,7 @@ def _report_generation(ctx: GAContext, generation: int) -> None:
             meanDeflection=best.fitness.meanDeflection,
             maxDeflection=best.fitness.maxDeflection,
             bestName=best.name,
+            cv=best.fitness.cv,
         )
     )
 
