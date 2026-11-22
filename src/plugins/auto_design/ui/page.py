@@ -706,7 +706,7 @@ class AutoDesignPage(QWidget):
 
         self.firstGeneration = Field(
             "Database Folder for the First Generation",
-            "Optional: a folder with one sub folder per SAP2000 model",
+            "A folder with one sub folder per SAP2000 model",
         )
         self.firstGeneration.edit.setClearButtonEnabled(True)
 
@@ -720,7 +720,7 @@ class AutoDesignPage(QWidget):
         self.firstGeneration.add_side_widget(browse)
 
         hint = QLabel(
-            "Optional. To continue an earlier run, give the folder of its last generation. "
+            "To continue an earlier run, give the folder of its last generation. "
             "When a folder is given it replaces the SAP2000 file above: the first sub folder "
             "(by name) gives the reference model and the models are the starting population."
         )

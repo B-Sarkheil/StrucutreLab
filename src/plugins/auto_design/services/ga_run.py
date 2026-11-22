@@ -314,16 +314,12 @@ def _make_member(
 
     return individual
 
-
 def _report_generation(ctx: GAContext, generation: int) -> None:
     """Send the numbers of the current population to the run page
     (generation 1 = the initial population)."""
 
-    def rank(individual: Individual):
-        return ranking_key(individual.fitness)
-
     best = min(ctx.population, key=selection_key)
-    
+
     mean_weight = sum(m.fitness.weight for m in ctx.population) / len(ctx.population)
 
     ctx.monitor.generation(
@@ -336,12 +332,8 @@ def _report_generation(ctx: GAContext, generation: int) -> None:
             meanDeflection=best.fitness.meanDeflection,
             maxDeflection=best.fitness.maxDeflection,
             bestName=best.name,
-            maxDeflection=best.fitness.maxDeflection,
-            bestName=best.name,
-            cv=best.fitness.cv,
         )
     )
-
 
 def _apply_column_rule(ctx: GAContext, options: dict[str, list[str]]) -> dict[str, list[str]]:
     """Step 8.0: prune the beam options and build the column rule data.

@@ -21,6 +21,7 @@ the part most worth verifying against a real SAP2000 installation.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -125,18 +126,51 @@ class SapClient:
                 f"v{SUPPORTED_VERSION} is supported."
             )
 
-    def open_model(self, sdb_path: str | Path) -> None:
-        """Open a .sdb file and switch to N-m-C units (as in openSapModel.m)."""
 
-        ret = self.model.File.OpenFile(str(sdb_path))
+    def current_model_path(self) -> str:
+        """Full path of the model open in SAP2000 right now ("" when none
+        is open or the model has never been saved)."""
 
-        if ret != 0:
-            raise SapError(f"SAP2000 could not open the file: {sdb_path}")
+        try:
+            return str(self.model.GetModelFilename(True) or "")
+        except Exception:
+            logger.debug("GetModelFilename failed", exc_info=True)
+            return ""
+
+    def is_model_open(self, sdb_path: str | Path) -> bool:
+        """True when `sdb_path` is the model that SAP2000 has open now."""
+
+        current = self.current_model_path()
+
+        if not current:
+            return False
+
+        def normal(path: str | Path) -> str:
+            return os.path.normcase(os.path.abspath(str(path)))
+
+        return normal(current) == normal(sdb_path)
+
+    def open_model(self, sdb_path: str | Path, reuse_open: bool = True) -> None:
+        """Make `sdb_path` the open model and switch to kgf-m-C units.
+
+        With `reuse_open` (default) a model that is already open in SAP2000
+        under the same path is NOT opened again (opening is slow); only the
+        units are set. Use `reuse_open=False` to force a fresh open.
+        """
+
+        if reuse_open and self.is_model_open(sdb_path):
+            logger.info("SAP2000: the model is already open, not reopening: %s", sdb_path)
+        else:
+            ret = self.model.File.OpenFile(str(sdb_path))
+
+            if ret != 0:
+                raise SapError(f"SAP2000 could not open the file: {sdb_path}")
 
         ret = self.model.SetPresentUnits(self.api.eUnits.kgf_m_C)
 
         if ret != 0:
             raise SapError("Could not set SAP2000 units to kgf_m_C.")
+
 
     def frame_section_names(self) -> list[str]:
         """Names of all frame sections defined in the open model."""
