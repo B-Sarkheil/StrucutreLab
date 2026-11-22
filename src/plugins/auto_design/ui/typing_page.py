@@ -70,10 +70,15 @@ from src.plugins.auto_design.services.population import ROLE_LABELS, Individual
 from src.plugins.auto_design.services.typing_summary import (
     TYPING_ORDER,
     sections_by_role,
-    weight_change_percent,
+    weight_change,
 )
 from src.plugins.auto_design.ui.roles_page import ROLE_COLORS
-from src.plugins.auto_design.ui.run_page import GREEN, PAGE_STYLE as RUN_STYLE, StatTile
+from src.plugins.auto_design.ui.run_page import (
+    CHANGE_COLORS,
+    GREEN,
+    PAGE_STYLE as RUN_STYLE,
+    StatTile,
+)
 from src.ui.theme import (
     AMBER,
     BLUE,
@@ -925,18 +930,22 @@ class TypingPage(QWidget):
             else:
                 deflection.set_value("–", "not used")
 
-            percent = (
-                weight_change_percent(fitness.weight, reference.weight)
+            result = (
+                weight_change(fitness.weight, fitness.cv, reference.weight, reference.cv)
                 if isinstance(reference, Fitness)
                 else None
             )
 
-            if percent is None:
+            if result is None or result.percent is None:
                 change.set_value("–", "no generation 1 weight")
             else:
-                color = GREEN if percent < -1e-9 else (DANGER if percent > 1e-9 else None)
+                sub = f"generation 1 best {reference.weight:,.1f} kg"
+
+                if result.note:
+                    sub += f"\n{result.note}"
+
                 change.set_value(
-                    f"{percent:+.2f} %", f"generation 1 best {reference.weight:,.1f} kg", color
+                    f"{result.percent:+.2f} %", sub, CHANGE_COLORS[result.verdict]
                 )
         else:
             for tile in (weight, dcr, deflection, change):

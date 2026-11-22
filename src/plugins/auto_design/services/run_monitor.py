@@ -40,6 +40,7 @@ class GenerationStats:
     meanDeflection: float = 0.0  # mean deflection ratio of the beams of the best structure
     maxDeflection: float = 0.0  # largest deflection ratio (limit is 1.0)
     bestName: str = ""  # name of the best member, e.g. "Gen-6-1" (shown by the DCR / Deflection chart)
+    cv: float = 0.0  # constraint violation of the best member (0 = feasible)
 
 
 def _ignore(*_args) -> None:

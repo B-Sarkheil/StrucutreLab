@@ -2,7 +2,7 @@ cd "D:\Python Library\StructureLab"
 
 
 git add .
-git commit -m "Add constriant of height/width of column against beam width"
+git commit -m "Fix classify bug in  element type page"
 git push origin main
 
 

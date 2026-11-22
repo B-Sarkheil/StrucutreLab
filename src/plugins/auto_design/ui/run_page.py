@@ -69,6 +69,13 @@ from PySide6.QtWidgets import (
 )
 
 from src.plugins.auto_design.services.run_monitor import GenerationStats
+from src.plugins.auto_design.services.typing_summary import (
+    BETTER,
+    NEUTRAL,
+    SAME,
+    WORSE,
+    weight_change,
+)
 from src.plugins.auto_design.ui.icons import cancel_icon
 from src.ui.theme import (
     AMBER,
@@ -96,6 +103,8 @@ FAILED = "failed"
 
 GREEN = "#3DDC97"
 VIOLET = "#B48CFF"
+# verdict of `weight_change` -> color of the value (None = default color)
+CHANGE_COLORS = {BETTER: GREEN, WORSE: DANGER, NEUTRAL: AMBER, SAME: None}
 
 WEIGHT_UNIT = "kg"
 
@@ -1548,6 +1557,7 @@ class RunPage(QWidget):
 
         self._total = max(1, int(total_generations))
         self._first_best = None
+        self._first_cv = 0.0
 
         self.chart.clear()
         self.chart.set_total(self._total)
@@ -1583,6 +1593,7 @@ class RunPage(QWidget):
 
         if self._first_best is None:
             self._first_best = stats.bestWeight
+            self._first_cv = stats.cv
             self._first_generation = stats.generation
 
         self.tile_generation.set_value(f"{stats.generation} / {self._total}", "generation")
@@ -1591,10 +1602,14 @@ class RunPage(QWidget):
         first = self._first_best
 
         if first:
-            change = (stats.bestWeight - first) / first * 100.0
-            color = GREEN if change < -1e-9 else (DANGER if change > 1e-9 else None)
+            change = weight_change(stats.bestWeight, stats.cv, first, self._first_cv)
+            sub = f"vs generation {self._first_generation}"
+
+            if change.note:
+                sub += f"\n{change.note}"
+
             self.tile_change.set_value(
-                f"{change:+.2f} %", f"vs generation {self._first_generation}", color
+                f"{change.percent:+.2f} %", sub, CHANGE_COLORS[change.verdict]
             )
 
         self.tile_ratio.set_value(f"{stats.meanRatio:.3f}", f"max {stats.maxRatio:.3f}")
