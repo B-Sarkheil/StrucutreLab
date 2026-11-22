@@ -46,7 +46,8 @@ class DeflectionSettings:
     divisor: int  # n of L / n
     beams: tuple[str, ...]  # frames with the role Beam
     segments: int = 20  # minimum output segments of every beam
-    cantilevers: frozenset = frozenset()  # beams with one free end (limit is doubled)
+    # beam -> its free end ("I" or "J"); only cantilever beams are listed
+    cantilevers: dict = field(default_factory=dict, compare=False)
     warned: set = field(default_factory=set, compare=False)  # messages already logged
 
 
@@ -66,7 +67,6 @@ def _to_float(text: str) -> float | None:
 # ---------------------------------------------------------------------
 # Pure numerics
 # ---------------------------------------------------------------------
-
 
 def relative_deflection(stations: list[float], moments: list[float], ei: float) -> float:
     """Largest |w| of the beam relative to its chord (same length unit as the
@@ -95,6 +95,42 @@ def relative_deflection(stations: list[float], moments: list[float], ei: float) 
     return max(
         abs(deflection[i] - (stations[i] - stations[0]) / length * end) for i in range(count)
     )
+
+def cantilever_deflection(
+    stations: list[float], moments: list[float], ei: float, free_at_start: bool
+) -> float:
+    """Largest |w| of a cantilever beam (the tip deflection), same length
+    unit as the stations. The fixed end has w = 0 and w' = 0; the curvature
+    M/EI is integrated twice (trapezoids) from the fixed end. The chord is
+    NOT removed: the free end really moves.
+
+    `stations` are measured from joint I. With `free_at_start` the free end
+    is joint I (station 0), so the integration runs from the other end:
+    the stations are mirrored and the moments reversed (the curvature does
+    not change sign when the direction of x is reversed)."""
+
+    count = len(stations)
+    length = stations[-1] - stations[0]
+
+    if count < 3 or length <= 0.0 or ei <= 0.0:
+        return 0.0
+
+    if free_at_start:
+        top = stations[-1]
+        stations = [top - s for s in reversed(stations)]
+        moments = list(reversed(moments))
+
+    slope = [0.0]
+    for i in range(1, count):
+        dx = stations[i] - stations[i - 1]
+        slope.append(slope[-1] + 0.5 * (moments[i - 1] + moments[i]) / ei * dx)
+
+    deflection = [0.0]
+    for i in range(1, count):
+        dx = stations[i] - stations[i - 1]
+        deflection.append(deflection[-1] + 0.5 * (slope[i - 1] + slope[i]) * dx)
+
+    return max(abs(value) for value in deflection)
 
 
 # ---------------------------------------------------------------------
@@ -184,10 +220,10 @@ def find_cantilever_beams(
     client: SapClient,
     beams: tuple[str, ...],
     connectivity: dict[str, tuple[str, str]],
-) -> frozenset[str]:
-    """Beams with exactly one free end. A joint is free when no other frame
-    is connected to it and it has no translational restraint. The reference
-    model must be open."""
+) -> dict[str, str]:
+    """Beam -> free end ("I" or "J") for the beams with exactly one free
+    end. A joint is free when no other frame is connected to it and it has
+    no translational restraint. The reference model must be open."""
 
     frames_at: dict[str, int] = {}
 
@@ -200,16 +236,22 @@ def find_cantilever_beams(
     def is_free(joint: str) -> bool:
         return frames_at.get(joint, 0) <= 1 and joint not in restrained
 
-    result = set()
+    result: dict[str, str] = {}
 
     for beam in beams:
         pair = connectivity.get(beam)
 
-        if pair is not None and is_free(pair[0]) != is_free(pair[1]):
-            result.add(beam)
+        if pair is None:
+            continue
 
-    return frozenset(result)
+        free_i, free_j = is_free(pair[0]), is_free(pair[1])
 
+        if free_i and not free_j:
+            result[beam] = "I"
+        elif free_j and not free_i:
+            result[beam] = "J"
+
+    return result
 
 
 # ---------------------------------------------------------------------
@@ -310,8 +352,20 @@ def read_deflection_ratios(client: SapClient, settings: DeflectionSettings) -> d
             if length <= 0.0:
                 continue
 
-            ratio = relative_deflection(stations, [p[1] for p in points], ei) / length
-            ratio *= settings.divisor
+            moments = [p[1] for p in points]
+            free_end = settings.cantilevers.get(frame)
+
+            if free_end is None:
+                value = relative_deflection(stations, moments, ei)
+            else:
+                value = cantilever_deflection(
+                    stations, moments, ei, free_at_start=(free_end == "I")
+                )
+
+            ratio = value / length * settings.divisor
+
+            if free_end is not None:
+                ratio /= CANTILEVER_LIMIT_FACTOR
 
             if frame in settings.cantilevers:
                 ratio /= CANTILEVER_LIMIT_FACTOR

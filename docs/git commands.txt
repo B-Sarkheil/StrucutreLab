@@ -2,7 +2,7 @@ cd "D:\Python Library\StructureLab"
 
 
 git add .
-git commit -m "Improve weight change percent box in run page"
+git commit -m "Correct the integral boundery condition of cantilever beams for deflection calculations"
 git push origin main
 
 
