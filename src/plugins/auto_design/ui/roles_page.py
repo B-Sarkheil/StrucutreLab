@@ -20,6 +20,8 @@ Next emits the dictionary frame -> role (the table content).
 from __future__ import annotations
 
 import logging
+import html
+from pathlib import Path
 
 from PySide6.QtCore import (
     QEvent,
@@ -37,6 +39,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QComboBox,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -64,6 +67,12 @@ from src.plugins.auto_design.services.population import (
     ROLE_LABELS,
     ROLES,
     classify_frames,
+)
+from src.plugins.auto_design.services.roles_excel import (
+    RoleRow,
+    RolesExcelError,
+    export_roles,
+    import_roles,
 )
 from src.plugins.auto_design.ui.fields import FORM_STYLE, Field, parse_float
 from src.plugins.auto_design.ui.sections_page import compile_name_filter
@@ -597,6 +606,20 @@ class FrameRolesPage(QWidget):
         self.retry_button.clicked.connect(self.start_loading)
         self.retry_button.setVisible(False)
 
+        self.import_button = QPushButton("Import…")
+        self.import_button.setToolTip(
+            "Read the frame types from an Excel file (matched by frame name)"
+        )
+        self.import_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.import_button.setMinimumSize(110, 42)
+        self.import_button.clicked.connect(self._import_excel)
+
+        self.export_button = QPushButton("Export…")
+        self.export_button.setToolTip("Save all frames and their types to Excel")
+        self.export_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.export_button.setMinimumSize(110, 42)
+        self.export_button.clicked.connect(self._export_excel)
+
         self.next_button = QPushButton("Next")
         self.next_button.setIcon(arrow_icon("right"))
         self.next_button.setIconSize(QSize(32, 24))
@@ -610,6 +633,8 @@ class FrameRolesPage(QWidget):
         footer = QHBoxLayout()
         footer.setSpacing(10)
         footer.addWidget(self.back_button)
+        footer.addWidget(self.import_button)
+        footer.addWidget(self.export_button)
         footer.addWidget(self.retry_button)
         footer.addStretch()
         footer.addWidget(self.next_button)
@@ -944,6 +969,125 @@ class FrameRolesPage(QWidget):
         self.tolerance.setEnabled(loaded)
         self.classify_button.setEnabled(loaded)
         self.next_button.setEnabled(ready)
+        self.import_button.setEnabled(ready)
+        self.export_button.setEnabled(ready)
+
+
+    # -----------------------------------------------------------------
+    # Excel
+    # -----------------------------------------------------------------
+
+    def _show_error(self, text: str) -> None:
+        self.message.setText(text)
+        self.message.setVisible(True)
+
+    def _export_excel(self) -> None:
+        if self._loading or self.table.rowCount() == 0:
+            return
+
+        sdb = Path(self.sap_path)
+        default = sdb.with_name(f"{sdb.stem}_types.xlsx")
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export frame types to Excel", str(default), "Excel files (*.xlsx)"
+        )
+
+        if not path:
+            return
+
+        if not path.lower().endswith(".xlsx"):
+            path += ".xlsx"
+
+        rows = []
+
+        for row in range(self.table.rowCount()):
+            rows.append(
+                RoleRow(
+                    frame=self.table.item(row, 0).text(),
+                    dx=float(self.table.item(row, 1).text()),
+                    dy=float(self.table.item(row, 2).text()),
+                    dz=float(self.table.item(row, 3).text()),
+                    role=self.table.item(row, TYPE_COLUMN).data(ROLE_DATA),
+                )
+            )
+
+        try:
+            export_roles(path, rows)
+        except RolesExcelError as exc:
+            self._show_error(str(exc))
+            return
+
+        self.message.setVisible(False)
+        self._set_status(
+            f"Exported {len(rows)} frames to {html.escape(Path(path).name)}.", result=True
+        )
+
+    def _import_excel(self) -> None:
+        if self._loading or self.table.rowCount() == 0:
+            return
+
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import frame types from Excel",
+            str(Path(self.sap_path).parent),
+            "Excel files (*.xlsx)",
+        )
+
+        if not path:
+            return
+
+        try:
+            data = import_roles(path)
+        except RolesExcelError as exc:
+            self._show_error(str(exc))
+            return
+
+        rows = {self.table.item(row, 0).text(): row for row in range(self.table.rowCount())}
+        matched = [frame for frame in data if frame in rows]
+
+        if not matched:
+            self._show_error("None of the frame names in the file exist in this model.")
+            return
+
+        changed = 0
+
+        # One update of the summary at the end instead of one per cell.
+        self._filling = True
+        self.table.blockSignals(True)
+
+        try:
+            for frame in matched:
+                item = self.table.item(rows[frame], TYPE_COLUMN)
+                role = data[frame]
+
+                if item.data(ROLE_DATA) != role:
+                    item.setData(ROLE_DATA, role)
+                    item.setText(ROLE_LABELS[role])
+                    changed += 1
+        finally:
+            self.table.blockSignals(False)
+            self._filling = False
+
+        self._apply_filter()  # also refreshes the counters
+        self.table.viewport().update()
+        self.message.setVisible(False)
+
+        text = (
+            f"Imported {html.escape(Path(path).name)}: {len(matched)} frames matched, "
+            f"{changed} types changed."
+        )
+        not_in_model = len(data) - len(matched)
+        not_in_file = self.table.rowCount() - len(matched)
+
+        if not_in_model:
+            text += f" {not_in_model} frame(s) of the file are not in the model."
+
+        if not_in_file:
+            text += f" {not_in_file} frame(s) of the model are not in the file (unchanged)."
+
+        self._set_status(text, result=True)
+        self.card.flash()
+
 
     # -----------------------------------------------------------------
     # Next
