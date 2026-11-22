@@ -415,6 +415,7 @@ class FrameRolesPage(QWidget):
         self._loading = False
         self._filling = False
         self._tolerance_dirty = False  # the text was changed but not applied
+        self._applied_tolerance: float | None = None  # tolerance the table was built with
         self._auto_sizing = False  # True while the code itself resizes columns
         self._user_sized = False  # True once the user dragged a column border
 
@@ -736,6 +737,10 @@ class FrameRolesPage(QWidget):
             return False
 
         self._tolerance_dirty = False
+        self._tolerance_dirty = False
+        self._applied_tolerance = tolerance
+        self.message.setVisible(False)
+        self._fill_table(roles)
         self.message.setVisible(False)
         self._fill_table(roles)
 
@@ -759,8 +764,21 @@ class FrameRolesPage(QWidget):
         return True
 
     def _on_tolerance_edited(self, _text: str) -> None:
-        self._tolerance_dirty = True
+        self._tolerance_dirty = self._tolerance_differs_from_applied()
         self._sync_controls()
+
+    def _tolerance_differs_from_applied(self) -> bool:
+        """True when the text on the page is not the tolerance the table was
+        built with. Retyping the same number (1, 1.0, 1,0) is not a change."""
+
+        text = self.tolerance.text().replace(",", ".")
+
+        try:
+            value = float(text)
+        except ValueError:
+            return True  # empty or not a number: it cannot match the applied value
+
+        return self._applied_tolerance is None or value != self._applied_tolerance
 
     def _on_classify(self) -> None:
         if self._loading or not self._frame_sections:
@@ -1096,6 +1114,8 @@ class FrameRolesPage(QWidget):
     def _on_next(self) -> None:
         if self.table.rowCount() == 0:
             return
+
+        self._tolerance_dirty = self._tolerance_differs_from_applied()
 
         if self._tolerance_dirty:
             self.message.setText(
