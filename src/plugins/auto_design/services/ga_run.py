@@ -56,7 +56,10 @@ from src.plugins.auto_design.services.database_folder import (
     clear_folder,
     copy_member_model,
 )
-from src.plugins.auto_design.services.deflection import DeflectionSettings
+from src.plugins.auto_design.services.deflection import (
+    DeflectionSettings,
+    find_cantilever_beams,
+)
 from src.plugins.auto_design.services.population import (
     BEAM,
     COLUMN,
@@ -221,15 +224,20 @@ def _deflection_settings(ctx: GAContext) -> DeflectionSettings | None:
         logger.warning("Deflection constraint: the model has no frame of type Beam")
         return None
 
+    cantilevers = find_cantilever_beams(ctx.sap, beams, ctx.frameConnectivity)
+
     logger.info(
-        "Deflection constraint: combination '%s', L/%d, %d beams",
-        constraints.deflectionCombo, constraints.deflectionDivisor, len(beams),
+        "Deflection constraint: combination '%s', L/%d, %d beams, "
+        "%d cantilever beams (limit doubled)",
+        constraints.deflectionCombo, constraints.deflectionDivisor,
+        len(beams), len(cantilevers),
     )
 
     return DeflectionSettings(
         combo=constraints.deflectionCombo,
         divisor=constraints.deflectionDivisor,
         beams=beams,
+        cantilevers=cantilevers,
     )
 
 

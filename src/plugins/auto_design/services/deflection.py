@@ -34,6 +34,10 @@ logger = logging.getLogger(__name__)
 
 STIFFNESS_TABLE = SECTION_TABLE  # field I33 (m^4 in kgf-m-C)
 E_TABLE = "Material Properties 02 - Basic Mechanical Properties"  # field E1
+RESTRAINT_TABLE = "Joint Restraint Assignments"  # fields Joint, U1, U2, U3, R1, R2, R3
+CANTILEVER_LIMIT_FACTOR = 2.0  # a cantilever beam is allowed twice the deflection of L / n
+
+_YES = {"yes", "true", "1"}
 
 
 @dataclass(frozen=True)
@@ -42,6 +46,7 @@ class DeflectionSettings:
     divisor: int  # n of L / n
     beams: tuple[str, ...]  # frames with the role Beam
     segments: int = 20  # minimum output segments of every beam
+    cantilevers: frozenset = frozenset()  # beams with one free end (limit is doubled)
     warned: set = field(default_factory=set, compare=False)  # messages already logged
 
 
@@ -152,11 +157,64 @@ def expand_combination(
 
 
 # ---------------------------------------------------------------------
-# EI of the beams
+# Cantilever beams
 # ---------------------------------------------------------------------
 
 
+def _restrained_joints(client: SapClient) -> set[str]:
+    """Joints with at least one translational restraint (U1, U2 or U3).
+    A problem with the table raises SapError on purpose: a wrong answer
+    here would silently double the limit of beams that are not cantilevers."""
 
+    result: set[str] = set()
+
+    for row in client.read_table(RESTRAINT_TABLE):
+        joint = pick_field(row, "Joint", RESTRAINT_TABLE)
+
+        if any(
+            pick_field(row, key, RESTRAINT_TABLE).lower() in _YES
+            for key in ("U1", "U2", "U3")
+        ):
+            result.add(joint)
+
+    return result
+
+
+def find_cantilever_beams(
+    client: SapClient,
+    beams: tuple[str, ...],
+    connectivity: dict[str, tuple[str, str]],
+) -> frozenset[str]:
+    """Beams with exactly one free end. A joint is free when no other frame
+    is connected to it and it has no translational restraint. The reference
+    model must be open."""
+
+    frames_at: dict[str, int] = {}
+
+    for pair in connectivity.values():
+        for joint in set(pair):
+            frames_at[joint] = frames_at.get(joint, 0) + 1
+
+    restrained = _restrained_joints(client)
+
+    def is_free(joint: str) -> bool:
+        return frames_at.get(joint, 0) <= 1 and joint not in restrained
+
+    result = set()
+
+    for beam in beams:
+        pair = connectivity.get(beam)
+
+        if pair is not None and is_free(pair[0]) != is_free(pair[1]):
+            result.add(beam)
+
+    return frozenset(result)
+
+
+
+# ---------------------------------------------------------------------
+# EI of the beams
+# ---------------------------------------------------------------------
 def read_beam_stiffness(
     client: SapClient, settings: DeflectionSettings
 ) -> dict[str, float]:
@@ -254,6 +312,10 @@ def read_deflection_ratios(client: SapClient, settings: DeflectionSettings) -> d
 
             ratio = relative_deflection(stations, [p[1] for p in points], ei) / length
             ratio *= settings.divisor
+
+            if frame in settings.cantilevers:
+                ratio /= CANTILEVER_LIMIT_FACTOR
+
             best = ratio if best is None else max(best, ratio)
 
         if best is not None:
@@ -266,7 +328,8 @@ def read_deflection_ratios(client: SapClient, settings: DeflectionSettings) -> d
         )
 
     logger.info(
-        "Deflection: %d beams, worst ratio %.3f", len(result), max(result.values())
+        "Deflection: %d beams (%d cantilevers), worst ratio %.3f",
+        len(result), len(settings.cantilevers), max(result.values()),
     )
 
     return result

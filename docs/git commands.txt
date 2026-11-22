@@ -2,7 +2,7 @@ cd "D:\Python Library\StructureLab"
 
 
 git add .
-git commit -m "Fix classify bug in  element type page"
+git commit -m "Improve weight change percent box in run page"
 git push origin main
 
 
