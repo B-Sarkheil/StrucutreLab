@@ -367,9 +367,6 @@ def read_deflection_ratios(client: SapClient, settings: DeflectionSettings) -> d
             if free_end is not None:
                 ratio /= CANTILEVER_LIMIT_FACTOR
 
-            if frame in settings.cantilevers:
-                ratio /= CANTILEVER_LIMIT_FACTOR
-
             best = ratio if best is None else max(best, ratio)
 
         if best is not None:

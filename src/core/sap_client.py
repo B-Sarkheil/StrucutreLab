@@ -406,3 +406,56 @@ class SapClient:
             raise SapError("DatabaseTables.GetAvailableTables failed.")
 
         return [str(key) for key in list(keys or [])[:count]]
+
+
+    def design_steel_detail_values(
+        self, group: str, table: int, field: str
+    ) -> list[tuple[str, float]]:
+        """(frame, value) rows of a numeric field of a steel design detail
+        table (DesignSteel.GetDetailResultsValue, item type Group)."""
+
+        result = self.model.DesignSteel.GetDetailResultsValue(
+            group, self.api.eItemType.Group, int(table), field, 0, None, None
+        )
+
+        # pythonnet returns (ret, NumberItems, FrameName, Value).
+        if not isinstance(result, tuple) or len(result) != 4:
+            raise SapError(f"Unexpected result of GetDetailResultsValue: {result!r}")
+
+        ret, count, frames, values = result[0], int(result[1]), result[2], result[3]
+
+        if ret != 0:
+            raise SapError(
+                f"DesignSteel.GetDetailResultsValue failed (table {table}, field '{field}')."
+            )
+
+        return [
+            (str(frame), float(value))
+            for frame, value in zip(list(frames or [])[:count], list(values or [])[:count])
+        ]
+
+    def design_steel_detail_texts(
+        self, group: str, table: int, field: str
+    ) -> list[tuple[str, str]]:
+        """(frame, text) rows of a text field of a steel design detail
+        table (DesignSteel.GetDetailResultsText, item type Group)."""
+
+        result = self.model.DesignSteel.GetDetailResultsText(
+            group, self.api.eItemType.Group, int(table), field, 0, None, None
+        )
+
+        # pythonnet returns (ret, NumberItems, FrameName, Text).
+        if not isinstance(result, tuple) or len(result) != 4:
+            raise SapError(f"Unexpected result of GetDetailResultsText: {result!r}")
+
+        ret, count, frames, texts = result[0], int(result[1]), result[2], result[3]
+
+        if ret != 0:
+            raise SapError(
+                f"DesignSteel.GetDetailResultsText failed (table {table}, field '{field}')."
+            )
+
+        return [
+            (str(frame), str(text))
+            for frame, text in zip(list(frames or [])[:count], list(texts or [])[:count])
+        ]

@@ -223,9 +223,9 @@ def read_stress_ratios(client: SapClient) -> dict[str, float]:
 # Major flexure / minor flexure / axial ratios at the governing point (directed mutation)
 # ---------------------------------------------------------------------
 
-# Prefix of the steel design table that holds MMajRatio, MMinRatio and PRatio.
-# The rest of the key is the design code name, so the table is found by prefix.
-FLEXURE_TABLE_PREFIX = "Steel Design 2 - PMM Details"
+# Table number of the PMM details in DesignSteel.GetDetailResultsValue
+# (found by test on 2026-11-23 with the user's model; check it with another design code).
+PMM_DETAIL_TABLE = 2
 
 _FLEXURE_WARNED: set[str] = set()
 
@@ -262,62 +262,61 @@ def read_steel_flexure_ratios(
     client: SapClient,
 ) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
     """(frame -> MMajRatio, frame -> MMinRatio, frame -> PRatio) of the steel
-    frames, all taken from ONE row of the PMM table: the row of the governing
-    load combination (the one that gives the DCR) whose location is closest to
-    the governing location. The ratios are never mixed between different
-    combinations.
+    frames, read with DesignSteel.GetDetailResultsValue (no database table, so
+    the name of the design code does not matter).
 
-    When the table, a field or the governing point is not found, the frame is
-    left out (the directed mutation then falls back to Z33); a problem with
-    the whole table gives three empty dicts and one warning in the log. A
-    frame whose row has no readable PRatio is left out of the third dict only."""
+    A frame may have several rows. The row taken is the one of the governing
+    load combination (the one that gives the DCR) whose location is closest to
+    the governing location; the three ratios always come from ONE row. When
+    the combination texts are not available, only the location decides.
+
+    Any problem (a failed call, rows of different lengths) gives three empty
+    dicts and one warning in the log: the directed mutation then uses Z33."""
 
     try:
-        table = next(
-            (k for k in client.table_keys() if k.lower().startswith(FLEXURE_TABLE_PREFIX.lower())),
-            None,
-        )
-
-        if table is None:
-            raise SapError(f"No table starting with '{FLEXURE_TABLE_PREFIX}' was found.")
-
         governing = _read_steel_governing_points(client)
 
-        # frame -> (distance to the governing location, -largest of the three ratios,
-        #           major, minor, axial or None)
-        chosen: dict[str, tuple[float, float, float, float, float | None]] = {}
+        major = client.design_steel_detail_values(ALL_GROUP, PMM_DETAIL_TABLE, "MMajRatio")
+        minor = client.design_steel_detail_values(ALL_GROUP, PMM_DETAIL_TABLE, "MMinRatio")
+        axial = client.design_steel_detail_values(ALL_GROUP, PMM_DETAIL_TABLE, "PRatio")
+        location = client.design_steel_detail_values(ALL_GROUP, PMM_DETAIL_TABLE, "Location")
 
-        for row in client.read_table(table):
-            frame = pick_field(row, "Frame", table)
+        try:
+            combos: list[tuple[str, str]] | None = client.design_steel_detail_texts(
+                ALL_GROUP, PMM_DETAIL_TABLE, "Combo"
+            )
+        except SapError:
+            combos = None
+
+        rows = len(major)
+        sizes = {len(minor), len(axial), len(location)}
+
+        if sizes != {rows} or (combos is not None and len(combos) != rows):
+            raise SapError("The detail result fields have different numbers of rows.")
+
+        # frame -> (tier, distance, -largest ratio, major, minor, axial)
+        # tier 0: row of the governing combination (closest location wins),
+        # tier 1: no row has that combination, the row with the largest ratio is used.
+        chosen: dict[str, tuple[int, float, float, float, float, float]] = {}
+        same_combo_frames: set[str] = set()
+
+        for index in range(rows):
+            frame = major[index][0]
+            values = (major[index][1], minor[index][1], axial[index][1])
             point = governing.get(frame)
 
-            if point is None:
-                continue
+            same_combo = (
+                point is not None
+                and (combos is None or combos[index][1].strip().lower() == point[0].lower())
+            )
 
-            combo, location = point
+            if same_combo:
+                same_combo_frames.add(frame)
+                key = (0, abs(location[index][1] - point[1]), -max(values), *values)
+            else:
+                key = (1, 0.0, -max(values), *values)
 
-            if pick_field(row, "Combo", table).lower() != combo.lower():
-                continue
-
-            try:
-                major = float(pick_field(row, "MMajRatio", table).replace(",", "."))
-                minor = float(pick_field(row, "MMinRatio", table).replace(",", "."))
-            except ValueError:
-                continue
-
-            try:
-                axial: float | None = float(pick_field(row, "PRatio", table).replace(",", "."))
-            except (SapError, ValueError):
-                axial = None
-
-            try:
-                distance = abs(float(pick_field(row, "Location", table).replace(",", ".")) - location)
-            except ValueError:
-                distance = 0.0
-
-            key = (distance, -max(major, minor, axial or 0.0), major, minor, axial)
-
-            if frame not in chosen or key[:2] < chosen[frame][:2]:
+            if frame not in chosen or key[:3] < chosen[frame][:3]:
                 chosen[frame] = key
     except SapError as exc:
         if str(exc) not in _FLEXURE_WARNED:
@@ -326,8 +325,16 @@ def read_steel_flexure_ratios(
 
         return {}, {}, {}
 
-    return (
-        {frame: values[2] for frame, values in chosen.items()},
-        {frame: values[3] for frame, values in chosen.items()},
-        {frame: values[4] for frame, values in chosen.items() if values[4] is not None},
+    logger.info(
+        "Flexure ratios: %d rows, %d frames in the detail table, %d frames of the steel "
+        "summary, %d with the governing combination",
+        rows, len(chosen), len(governing), len(same_combo_frames),
     )
+
+    return (
+        {frame: values[3] for frame, values in chosen.items()},
+        {frame: values[4] for frame, values in chosen.items()},
+        {frame: values[5] for frame, values in chosen.items()},
+    )
+
+
