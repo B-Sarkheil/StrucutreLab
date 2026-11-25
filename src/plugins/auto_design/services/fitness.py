@@ -93,7 +93,6 @@ class Fitness:
 # CV (pure functions: no SAP)
 # ---------------------------------------------------------------------
 
-
 def governing_ratios(parts: Iterable[dict[str, float]]) -> dict[str, float]:
     """r_i_gov: the largest ratio of every element over all element constraints."""
 

@@ -584,7 +584,7 @@ def step8_resume_population(ctx: GAContext) -> None:
         ctx.population.append(individual)
 
     ctx.referenceFitness = ctx.population[0].fitness
-    ctx.firstBestFitness = min(ctx.population, key=lambda m: ranking_key(m.fitness)).fitness
+    ctx.firstBestFitness = min(ctx.population, key=selection_key).fitness
 
     logger.info(
         "Step 8 - resume: %d models of %s copied to %s (random initial population skipped)",
